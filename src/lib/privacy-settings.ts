@@ -2,7 +2,7 @@ import { usePersistentState } from '@/hooks/use-persistent-state';
 
 import { REFRESH_OFF, type RefreshInterval } from './auto-refresh';
 import { DEFAULT_HEADER_SETTINGS, type HeaderSettings } from './header-rules';
-import type { ExitKind } from './proxy';
+import { EMPTY_ENDPOINT, type ExitKind, type ResidentialEndpoint } from './proxy';
 import type { PersonaMode } from './persona';
 import type { BurnInterval } from './session-burn';
 import type { SearchEngine } from './url';
@@ -52,6 +52,12 @@ export type PrivacySettings = {
   rotateOnReload: boolean;
   /** Which network exit to use. */
   exit: ExitKind;
+  /**
+   * The residential endpoint, when `exit` is 'residential'. Stored on the device only.
+   * Credentials are kept here because the WebView layer needs them to authenticate; they
+   * are never sent anywhere except the proxy the user configured.
+   */
+  residentialEndpoint: ResidentialEndpoint;
 };
 
 export const DEFAULT_SETTINGS: PrivacySettings = {
@@ -75,6 +81,7 @@ export const DEFAULT_SETTINGS: PrivacySettings = {
   autoRefresh: REFRESH_OFF,
   rotateOnReload: false,
   exit: 'direct',
+  residentialEndpoint: EMPTY_ENDPOINT,
 };
 
 /** The DoH resolver used when DNS-over-HTTPS is on. */
