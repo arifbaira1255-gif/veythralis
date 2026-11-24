@@ -28,8 +28,7 @@
  *   storage     navigator.storage.estimate returns a plausible quota
  *   speech      speechSynthesis.getVoices returns a plausible voice list
  *   timing      performance.now() coarsened to defeat timer-based side channels
- *   cookies     document.cookie namespaced per tab, so two tabs on one origin
- *               cannot read each other's cookies
+ *   storage     localStorage/sessionStorage/IndexedDB namespaced per tab
  *
  * Honest limit, stated in the app too: this raises the cost of cross-site
  * correlation a great deal. It is not a guarantee. TLS/JA3, IP address, and
@@ -115,26 +114,35 @@ const SCREENS: readonly [number, number][] = [
   [1680, 1050],
 ];
 
+//
+// United States only, on purpose. A browser that claims a Windows machine in one
+// country and a timezone in another is a contradiction a site can read in one line of
+// JavaScript, and a contradiction is a stronger identifier than any single attribute.
+// Every entry here is a real US zone with the offset JavaScript reports (minutes WEST
+// of UTC, so New York is +300, not -300).
 const TIMEZONES: readonly { tz: string; offset: number }[] = [
-  { tz: 'Europe/London', offset: 0 },
-  { tz: 'Europe/Berlin', offset: -60 },
-  { tz: 'Europe/Amsterdam', offset: -60 },
   { tz: 'America/New_York', offset: 300 },
   { tz: 'America/Chicago', offset: 360 },
+  { tz: 'America/Denver', offset: 420 },
+  { tz: 'America/Phoenix', offset: 420 },
   { tz: 'America/Los_Angeles', offset: 480 },
-  { tz: 'Asia/Singapore', offset: -480 },
-  { tz: 'Australia/Sydney', offset: -600 },
+  { tz: 'America/Anchorage', offset: 540 },
+  { tz: 'Pacific/Honolulu', offset: 600 },
 ];
 
+//
+// en-US only, for the same coherence reason as the timezone table: a US timezone with a
+// de-DE locale is a contradiction. A US-English browser is also the single most common
+// locale on the web, so it is the least identifying choice as well as the coherent one.
 const LOCALES: readonly { language: string; languages: string[] }[] = [
-  { language: 'en-GB', languages: ['en-GB', 'en'] },
   { language: 'en-US', languages: ['en-US', 'en'] },
-  { language: 'de-DE', languages: ['de-DE', 'de', 'en'] },
-  { language: 'fr-FR', languages: ['fr-FR', 'fr', 'en'] },
-  { language: 'nl-NL', languages: ['nl-NL', 'nl', 'en'] },
-  { language: 'es-ES', languages: ['es-ES', 'es', 'en'] },
 ];
 
+//
+// Windows GPUs only. The pool previously carried an Apple M1 entry, which contradicted
+// the Win32 platform the same profile declares — a site reading both surfaces could
+// prove the machine was spoofed. Every renderer here is an ANGLE/D3D11 string, which is
+// what Chrome on Windows actually reports.
 const GPUS: readonly { vendor: string; renderer: string; maxTex: number }[] = [
   {
     vendor: 'Google Inc. (NVIDIA)',
@@ -152,8 +160,8 @@ const GPUS: readonly { vendor: string; renderer: string; maxTex: number }[] = [
     maxTex: 16384,
   },
   {
-    vendor: 'Google Inc. (Apple)',
-    renderer: 'ANGLE (Apple, Apple M1, OpenGL 4.1)',
+    vendor: 'Google Inc. (NVIDIA)',
+    renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)',
     maxTex: 16384,
   },
   {
@@ -206,20 +214,11 @@ const UA_POOL: readonly {
     chBits: '64',
   },
   {
-    ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-    platform: 'MacIntel',
+    ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    platform: 'Win32',
     vendor: 'Google Inc.',
-    chPlatform: 'macOS',
-    chPlatformVersion: '14.6.1',
-    chArch: 'arm',
-    chBits: '64',
-  },
-  {
-    ua: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-    platform: 'Linux x86_64',
-    vendor: 'Google Inc.',
-    chPlatform: 'Linux',
-    chPlatformVersion: '6.1.0',
+    chPlatform: 'Windows',
+    chPlatformVersion: '10.0.0',
     chArch: 'x86',
     chBits: '64',
   },
@@ -237,14 +236,17 @@ function chBrandsFor(major: string): [string, string][] {
   ];
 }
 
+//
+// Windows US voices only. The pool previously carried 'Daniel' and 'Samantha' (macOS
+// voices) and two UK voices, which contradicted both the Windows platform and the en-US
+// locale — a site that enumerates voices could prove the declared machine wrong. These
+// are the SAPI voices a real Windows 10/11 desktop with en-US actually reports.
 const VOICE_POOL: readonly string[] = [
-  'Google UK English Female',
-  'Google UK English Male',
-  'Google US English',
   'Microsoft David - English (United States)',
   'Microsoft Zira - English (United States)',
-  'Daniel',
-  'Samantha',
+  'Microsoft Mark - English (United States)',
+  'Microsoft Hazel - English (United States)',
+  'Google US English',
 ];
 
 const MEDIA_POOL: readonly { kind: string; label: string }[] = [
@@ -749,41 +751,30 @@ export function buildInjectionScript(
     };
   });
 
-  // ---- per-tab cookie isolation ----
-  // document.cookie is namespaced per tab, so two tabs on the same origin cannot read
-  // each other's cookies. The prefix is stripped on read, so the page sees its own
-  // cookies exactly as it wrote them.
-  patch(function(){
-    var prefix = '__vth_' + C.tab + '__';
-    var desc = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie');
-    if (!desc || !desc.get || !desc.set) return;
-    Object.defineProperty(document, 'cookie', {
-      configurable: true,
-      get: function(){
-        var raw = desc.get.call(document) || '';
-        if (!raw) return '';
-        return raw
-          .split('; ')
-          .filter(function(pair){ return pair.indexOf(prefix) === 0; })
-          .map(function(pair){ return pair.slice(prefix.length); })
-          .join('; ');
-      },
-      set: function(v){
-        var str = String(v || '');
-        var semi = str.indexOf(';');
-        var head = semi === -1 ? str : str.slice(0, semi);
-        var tail = semi === -1 ? '' : str.slice(semi);
-        desc.set.call(document, prefix + head + tail);
-      },
-    });
-  });
+  // ---- cookies: left alone, deliberately ----
+  // An earlier version prefixed every cookie name with a per-tab marker so two tabs
+  // could not read each other's cookies. It broke the web: the page wrote sid=abc,
+  // the browser stored __vth_t1__sid=abc, and that prefixed name is what went out in
+  // the Cookie header. Every server-side session, login and cart silently failed —
+  // which is exactly the "search opens the wrong page / clicking goes somewhere else"
+  // symptom. Cookie isolation is now done the way it actually works: incognito on the
+  // WebView plus a real purge on rotation (see PURGE_SCRIPT), so nothing is written to
+  // the persistent jar and a rotated identity starts with an empty one.
 
   // ---- per-tab storage isolation ----
   // Each tab gets its own namespace inside localStorage/sessionStorage, so two tabs on
   // the same origin cannot read each other's data. IndexedDB database names are
   // prefixed for the same reason.
+  //
+  // The real Storage objects are captured ONCE, before the accessors are replaced. The
+  // first version read window.localStorage from inside the getter that defines
+  // window.localStorage, which recursed until the stack blew and left every site that
+  // touches localStorage broken.
   patch(function(){
     var prefix = '__vth_' + C.tab + '__';
+    var realLS = null, realSS = null;
+    try { realLS = window.localStorage; } catch(e){}
+    try { realSS = window.sessionStorage; } catch(e){}
     var wrap = function(store){
       if (!store) return store;
       var key = function(k){ return prefix + k; };
@@ -820,8 +811,14 @@ export function buildInjectionScript(
       });
       return api;
     };
-    try { Object.defineProperty(window, 'localStorage', { get: function(){ return wrap(window.__vth_ls || (window.__vth_ls = window.localStorage)); }, configurable: true }); } catch(e){}
-    try { Object.defineProperty(window, 'sessionStorage', { get: function(){ return wrap(window.__vth_ss || (window.__vth_ss = window.sessionStorage)); }, configurable: true }); } catch(e){}
+    if (realLS) {
+      var lsApi = wrap(realLS);
+      try { Object.defineProperty(window, 'localStorage', { get: function(){ return lsApi; }, configurable: true }); } catch(e){}
+    }
+    if (realSS) {
+      var ssApi = wrap(realSS);
+      try { Object.defineProperty(window, 'sessionStorage', { get: function(){ return ssApi; }, configurable: true }); } catch(e){}
+    }
     try {
       if (window.indexedDB && window.indexedDB.open) {
         var open = window.indexedDB.open.bind(window.indexedDB);
