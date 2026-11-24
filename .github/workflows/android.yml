@@ -1,0 +1,45 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Set up EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build APK
+        run: eas build --platform android --profile preview --non-interactive --wait
+
+      - name: Download APK artifact
+        run: |
+          mkdir -p artifacts
+          eas build:list --platform android --limit 1 --json --non-interactive \
+            | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const b=JSON.parse(s)[0];console.log(b.artifacts.buildUrl)})" \
+            > artifacts/url.txt
+          curl -L -o artifacts/veythralis.apk "$(cat artifacts/url.txt)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: veythralis-apk
+          path: artifacts/veythralis.apk
