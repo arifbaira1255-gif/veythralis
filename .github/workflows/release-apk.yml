@@ -44,9 +44,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           mkdir -p dist
           gh run download "${{ steps.src.outputs.run_id }}" -n zuno-apk -D dist
           ls -lh dist/
+          # The build already wrote SHA256.txt; recompute so the published hash is the one
+          # for the exact bytes being uploaded, not a file that could have drifted.
           sha256sum dist/zuno.apk | tee dist/SHA256.txt
 
       - name: Read the version from app.json
@@ -62,8 +65,9 @@ jobs:
           TAG: ${{ github.event.inputs.tag }}
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
+          set -euo pipefail
           # A manual dispatch uses the tag the user typed; an automatic run uses v<version>.
-          if [ -z "$TAG" ]; then TAG="v$VERSION"; fi
+          if [ -z "${TAG:-}" ]; then TAG="v$VERSION"; fi
           echo "TAG=$TAG" >> "$GITHUB_ENV"
 
           NOTES=$(cat <<EOF
@@ -76,8 +80,11 @@ jobs:
           2. Open it on the phone and allow "install unknown apps" for your browser or file manager.
           3. Install and open.
 
-          This build is signed with the CI debug keystore, so it installs directly but is not
-          suitable for Play Store submission.
+          ### Updating from an earlier build
+          This APK is signed with the project's own release key, and every build from now on
+          uses that same key. So it installs straight over a previous Zuno build — no uninstall
+          needed. If you still have a build from before this change installed, that one was
+          signed with a throwaway CI key: uninstall it once, then install this.
 
           ### Verify the download
           \`\`\`
@@ -94,9 +101,9 @@ jobs:
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/zuno.apk dist/SHA256.txt --clobber
-            gh release edit "$TAG" --notes "$NOTES"
+            gh release edit "$TAG" --notes "$NOTES" --latest
           else
-            gh release create "$TAG" dist/zuno.apk dist/SHA256.txt --title "Zuno Browser $TAG" --notes "$NOTES"
+            gh release create "$TAG" dist/zuno.apk dist/SHA256.txt --title "Zuno Browser $TAG" --notes "$NOTES" --latest
           fi
 
       - name: Report the download URL
