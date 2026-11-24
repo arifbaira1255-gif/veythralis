@@ -1,15 +1,22 @@
 name: Build Android APK
 
-# This workflow builds the APK with Gradle directly, on GitHub's own runner.
-# It needs NO Expo account and NO token: the runner already has the Android SDK and
-# Java, so `expo prebuild` + `gradlew assembleRelease` is all that is required.
+# Builds the APK with Gradle directly on GitHub's own runner.
+# No Expo account and no token: the runner already has the Android SDK and Java,
+# so `expo prebuild` generates the native project and Gradle compiles it.
+#
+# The release build is signed with the keystore in android-keystore/, NOT with the
+# per-run debug key. That matters: Android refuses to install an update whose signing
+# certificate differs from the installed app, so a stable key is what makes
+# "install over the previous version" work at all.
 
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
+
+# Least privilege: the build only reads the repo. The Release workflow needs write.
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -17,21 +24,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # NOTE: no `cache: npm` here on purpose.
+      # setup-node's npm cache requires a lockfile to exist in the repo and fails the
+      # whole job when it does not ("Dependencies lock file is not found"). That is
+      # exactly what broke runs #27-#31: the third step died before anything was built,
+      # so not a single line of app code was ever compiled.
+      # The cache stays off so that a missing lockfile can never take the build down
+      # again. Dependency drift is instead held down by the `overrides` block in
+      # package.json, which pins the three packages that broke the build before.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
+          node-version: 22
 
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-      - name: Generate the app icon
+      # The app icon is generated from source (tools/make_icon.py) rather than committed
+      # as a binary, so it is always reproducible and never drifts from the brand colours.
+      - name: Generate app icon
         run: |
-          python3 -m pip install --quiet pillow
+          pip install --quiet pillow numpy
           python3 tools/make_icon.py
           ls -lh assets/images/
 
@@ -54,8 +72,17 @@ jobs:
           npx --yes playwright@1.55.0 install --with-deps chromium || true
           node scripts/verify-privacy.mjs
 
-      - name: Prebuild the Android project
-        run: npx expo prebuild --platform android --clean --no-install
+      - name: Verify JS bundle compiles
+        run: npx expo export --platform android --output-dir .expo-export-check
+
+      - name: Generate the native Android project
+        run: npx expo prebuild --platform android --no-install
+
+      # Expo's generated build.gradle signs the release variant with the debug keystore.
+      # Rewrite that to the committed release keystore so every build carries the same
+      # certificate and an update installs over the previous version.
+      - name: Point the release build at the stable keystore
+        run: node tools/patch-android-signing.mjs
 
       - name: Build release APK
         working-directory: android
@@ -63,15 +90,34 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon --stacktrace
 
+      # A corrupt or misaligned APK is the other way "This app was not installed" happens,
+      # so the artifact is verified here instead of on the phone. A build that cannot
+      # pass apksigner/zipalign fails now rather than shipping a file that will not open.
+      - name: Verify the APK is signed and aligned
+        run: |
+          set -euo pipefail
+          APK="$(find android -name '*.apk' -type f | head -1)"
+          echo "APK: $APK"
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          echo "build-tools: $BT"
+          "$BT/zipalign" -c -v -p 4 "$APK" > /tmp/zipalign.txt 2>&1 && echo "zipalign: OK" || { cat /tmp/zipalign.txt; exit 1; }
+          "$BT/apksigner" verify --verbose --print-certs "$APK" | tee /tmp/apksigner.txt
+          grep -q "CN=Zuno Browser" /tmp/apksigner.txt || { echo "::error::APK is not signed with the Zuno release key"; exit 1; }
+          echo "signature: OK (stable Zuno release key)"
+
       - name: Collect the APK
         run: |
-          mkdir -p dist
-          find android/app/build/outputs/apk -name '*.apk' -exec cp {} dist/zuno.apk \;
-          ls -lh dist/
-          sha256sum dist/zuno.apk | tee dist/SHA256.txt
+          set -euo pipefail
+          mkdir -p artifacts
+          APK="$(find android -name '*.apk' -type f | head -1)"
+          cp "$APK" artifacts/zuno.apk
+          sha256sum artifacts/zuno.apk | tee artifacts/SHA256.txt
+          ls -lh artifacts/
 
       - uses: actions/upload-artifact@v4
         with:
           name: zuno-apk
-          path: dist/
+          path: |
+            artifacts/zuno.apk
+            artifacts/SHA256.txt
           retention-days: 30
