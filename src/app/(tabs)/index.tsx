@@ -18,6 +18,7 @@ import { ShieldPanel } from '@/components/ShieldPanel';
 import { TabBar } from '@/components/TabBar';
 import { radius, spacing, useColors } from '@/constants/theme';
 import { shouldBlock } from '@/lib/blocklist';
+import { PURGE_SCRIPT, formatRefresh, refreshSeconds } from '@/lib/auto-refresh';
 import {
   buildInjectionScript,
   buildProfile,
@@ -40,23 +41,7 @@ import { cloakProvider, stripTrackingParams } from '@/lib/tracking-params';
 import { hostOf, isHttp, toHttps, toUrl } from '@/lib/url';
 
 /** Script that wipes this tab's namespaced storage when the user asks for a clean slate. */
-const WIPE_SCRIPT = `(function(){
-  try { localStorage.clear(); } catch(e){}
-  try { sessionStorage.clear(); } catch(e){}
-  try {
-    if (window.indexedDB && indexedDB.databases) {
-      indexedDB.databases().then(function(dbs){
-        dbs.forEach(function(d){ try { indexedDB.deleteDatabase(d.name); } catch(e){} });
-      });
-    }
-  } catch(e){}
-  try {
-    if (window.caches && caches.keys) {
-      caches.keys().then(function(keys){ keys.forEach(function(k){ caches.delete(k); }); });
-    }
-  } catch(e){}
-  true;
-})();`;
+const WIPE_SCRIPT = PURGE_SCRIPT;
 
 export default function BrowserScreen() {
   const colors = useColors();
@@ -68,6 +53,7 @@ export default function BrowserScreen() {
   const [seed, setSeed] = useState<string>(() => newSeed());
   const [addressFocused, setAddressFocused] = useState(false);
   const [burnRemaining, setBurnRemaining] = useState<number | null>(null);
+  const [refreshRemaining, setRefreshRemaining] = useState<number | null>(null);
 
   const webviews = useRef<Record<string, WebView | null>>({});
 
@@ -198,6 +184,88 @@ export default function BrowserScreen() {
     );
     setShieldOpen(false);
   }, []);
+
+  // ---- identity rotation ----
+  // A new seed means a new user agent, new canvas/WebGL/audio noise, new screen and
+  // timezone. Nothing about the old identity survives it. This is the only way a return
+  // visit looks like a different person, and it is why the auto-refresh below is a
+  // rotation rather than a reload.
+  const rotateIdentity = useCallback(() => {
+    setSeed(newSeed());
+  }, []);
+
+  // ---- purge this tab before it goes away ----
+  // Cookies, Storage, IndexedDB, Cache Storage and service workers live in the page's
+  // origin, not in the native layer, so the page has to erase them itself. The native
+  // clearCache() below cannot reach any of them.
+  const purgeTab = useCallback((tabId: string) => {
+    const wv = webviews.current[tabId];
+    if (!wv) return;
+    try {
+      wv.injectJavaScript(PURGE_SCRIPT);
+    } catch {
+      // An unmounted WebView has nothing to purge.
+    }
+    try {
+      wv.clearCache(true);
+    } catch {
+      // Same.
+    }
+  }, []);
+
+  // ---- auto-refresh ----
+  // Reload the active tab on the user's interval and mint a new identity each time, so
+  // the next request cannot be tied to the previous one. Navigation history is kept:
+  // this is a fresh visitor to the same page, not a forward navigation.
+  useEffect(() => {
+    const seconds = refreshSeconds(settings.autoRefresh);
+    if (!seconds) {
+      setRefreshRemaining(null);
+      return;
+    }
+    const totalMs = seconds * 1000;
+    let startedAt = Date.now();
+    setRefreshRemaining(totalMs);
+    const tick = setInterval(() => {
+      const left = totalMs - (Date.now() - startedAt);
+      if (left > 0) {
+        setRefreshRemaining(left);
+        return;
+      }
+      // Order matters: purge while the page still exists, rotate the identity, then
+      // reload so the next request is made by the new persona.
+      startedAt = Date.now();
+      setRefreshRemaining(totalMs);
+      purgeTab(activeId);
+      rotateIdentity();
+      const wv = webviews.current[activeId];
+      if (wv) {
+        try {
+          wv.reload();
+        } catch {
+          // Nothing to reload.
+        }
+      }
+    }, 1000);
+    return () => clearInterval(tick);
+  }, [settings.autoRefresh, activeId, purgeTab, rotateIdentity]);
+
+  // ---- manual reload ----
+  // With rotateOnReload on, a manual reload is also a new identity.
+  const reloadActive = useCallback(() => {
+    if (settings.rotateOnReload) {
+      purgeTab(activeId);
+      rotateIdentity();
+    }
+    const wv = webviews.current[activeId];
+    if (wv) {
+      try {
+        wv.reload();
+      } catch {
+        // Nothing to reload.
+      }
+    }
+  }, [activeId, purgeTab, rotateIdentity, settings.rotateOnReload]);
 
   // ---- session burn timer ----
   // A hard ceiling on session lifetime, counted from the last reset. When it expires
@@ -384,6 +452,14 @@ export default function BrowserScreen() {
             </Text>
           </View>
         ) : null}
+        {refreshRemaining !== null ? (
+          <View style={styles.burnRow}>
+            <Ionicons name="sync-outline" size={12} color={colors.muted} />
+            <Text style={[styles.burnText, { color: colors.muted }]}>
+              New identity in {formatCountdown(refreshRemaining)} ({formatRefresh(settings.autoRefresh)})
+            </Text>
+          </View>
+        ) : null}
         {active.loading ? (
           <View style={[styles.progress, { backgroundColor: colors.primarySoft }]}>
             <View style={[styles.progressBar, { backgroundColor: colors.primary }]} />
@@ -482,7 +558,7 @@ export default function BrowserScreen() {
             />
           </Pressable>
           <Pressable
-            onPress={() => webviews.current[active.id]?.reload()}
+            onPress={reloadActive}
             hitSlop={8}
             accessibilityLabel="Reload"
             style={styles.navButton}>
