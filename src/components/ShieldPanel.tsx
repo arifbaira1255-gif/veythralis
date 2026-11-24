@@ -1,9 +1,11 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { BRAND, radius, spacing, useColors } from '@/constants/theme';
 import type { FingerprintProfile } from '@/lib/fingerprint';
+import { compareProbe, probeScore } from '@/lib/fingerprint-probe';
 import type { HeaderRule } from '@/lib/header-rules';
+import { PERSONA_MODE_LABEL, cohortShare } from '@/lib/persona';
 import type { PrivacySettings } from '@/lib/privacy-settings';
 import { formatCountdown } from '@/lib/session-burn';
 import type { Tab } from '@/lib/tab-isolation';
@@ -17,6 +19,7 @@ type Props = {
   burnRemaining: number | null;
   onClose: () => void;
   onClear: () => void;
+  onProbe: () => void;
 };
 
 function Row({ label, value }: { label: string; value: string }) {
@@ -58,8 +61,12 @@ export function ShieldPanel({
   burnRemaining,
   onClose,
   onClear,
+  onProbe,
 }: Props) {
   const colors = useColors();
+  const share = Math.round(cohortShare(profile) * 100);
+  const findings = tab.probe ? compareProbe(profile, tab.probe) : [];
+  const score = probeScore(findings);
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={[styles.backdrop, { backgroundColor: colors.overlay }]} onPress={onClose}>
@@ -98,7 +105,59 @@ export function ShieldPanel({
               <Toggle on={settings.coarsenTimers} label="Coarsened high-res timers" />
               <Toggle on={settings.randomizeFingerprint} label="Randomized fingerprint" />
               <Toggle on={settings.perTabFingerprint} label="Separate identity per tab" />
+              <Toggle on={settings.stripTrackingParams} label="Tracking parameters stripped" />
+              <Toggle on={settings.blockCnameCloaking} label="CNAME-cloaked analytics blocked" />
+              <Toggle on={settings.geoCoherentPersona} label="Region-coherent persona" />
               <Toggle on={settings.clearOnExit} label="Clear data on exit" />
+            </View>
+
+            <Text style={[styles.section, { color: colors.muted }]}>THIS TAB</Text>
+            <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Row label="Trackers" value={`${tab.blocked} blocked`} />
+              <Row label="URL params" value={`${tab.strippedParams} stripped`} />
+              <Row label="Cloaked analytics" value={`${tab.cloaked} blocked`} />
+              {tab.strippedNames.length > 0 ? (
+                <Row label="Params removed" value={tab.strippedNames.slice(0, 8).join(', ')} />
+              ) : null}
+            </View>
+
+            <Text style={[styles.section, { color: colors.muted }]}>LIVE FINGERPRINT CHECK</Text>
+            <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              {tab.probing ? (
+                <View style={styles.probeRow}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                  <Text style={[styles.rowLabel, { color: colors.muted, width: undefined }]}>
+                    Measuring what this page can see…
+                  </Text>
+                </View>
+              ) : tab.probe ? (
+                <>
+                  <Row label="Site sees" value={tab.probe.id} />
+                  <Row label="Patches holding" value={`${score.passed} of ${score.total}`} />
+                  {findings
+                    .filter((f) => !f.ok)
+                    .map((f) => (
+                      <Row key={f.key} label={`${f.key} (leak)`} value={f.actual} />
+                    ))}
+                </>
+              ) : (
+                <Text style={[styles.rowLabel, { color: colors.muted, width: undefined }]}>
+                  No measurement yet for this page.
+                </Text>
+              )}
+              <Pressable
+                onPress={onProbe}
+                accessibilityRole="button"
+                style={({ pressed }) => [
+                  styles.probeButton,
+                  { borderColor: colors.border },
+                  pressed && { opacity: 0.7 },
+                ]}>
+                <Ionicons name="scan-outline" size={16} color={colors.primary} />
+                <Text style={[styles.probeText, { color: colors.primary }]}>
+                  {tab.probing ? 'Measuring…' : 'Measure this page again'}
+                </Text>
+              </Pressable>
             </View>
 
             <Text style={[styles.section, { color: colors.muted }]}>SESSION</Text>
@@ -111,6 +170,8 @@ export function ShieldPanel({
                 label="Tab identity"
                 value={settings.perTabFingerprint ? 'Unique to this tab' : 'Shared this session'}
               />
+              <Row label="Strategy" value={PERSONA_MODE_LABEL[settings.personaMode].title} />
+              <Row label="Crowd" value={`${share}% of desktop devices look like this`} />
             </View>
 
             <Text style={[styles.section, { color: colors.muted }]}>CURRENT FINGERPRINT</Text>
@@ -249,4 +310,16 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   clearText: { fontSize: 15, fontWeight: '700' },
+  probeRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  probeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    minHeight: 42,
+    borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginTop: spacing.xs,
+  },
+  probeText: { fontSize: 14, fontWeight: '600' },
 });
