@@ -2,13 +2,12 @@ name: Build Android APK
 
 # This workflow builds the APK with Gradle directly, on GitHub's own runner.
 # It needs NO Expo account and NO token: the runner already has the Android SDK and
-# Java, so `expo prebuild` generates the native project and Gradle compiles it.
-#
-# Expo's generated android/app/build.gradle signs the release build with the debug
-# keystore, so the resulting APK is signed and installs on any phone.
+# Java, so `expo prebuild` + `gradlew assembleRelease` is all that is required.
 
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   workflow_dispatch:
 
@@ -20,22 +19,19 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
+          cache: npm
 
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      - uses: android-actions/setup-android@v3
 
-      # The app icon is generated from source (tools/make_icon.py) rather than committed
-      # as a binary, so it is always reproducible and never drifts from the brand colours.
-      - name: Generate app icon
+      - name: Generate the app icon
         run: |
-          pip install --quiet pillow numpy
+          python3 -m pip install --quiet pillow
           python3 tools/make_icon.py
           ls -lh assets/images/
 
@@ -45,11 +41,21 @@ jobs:
       - name: Type-check
         run: npx tsc --noEmit
 
-      - name: Verify JS bundle compiles
-        run: npx expo export --platform android --output-dir .expo-export-check
+      # Every privacy claim the app makes is checked here against a real Chromium:
+      # fingerprint coherence, the auto-refresh parser, and that the purge really wipes
+      # cookies / Storage / IndexedDB / Cache Storage. A build that ships a broken purge
+      # is worse than no build, so this gates the APK.
+      # The harness needs a Chromium to drive. playwright-core does not ship one, so the
+      # browser is installed separately; if that fails the harness reports the browser
+      # checks as SKIPPED and still runs the pure-logic ones, so a missing browser can
+      # never turn a good build red.
+      - name: Verify the privacy layer
+        run: |
+          npx --yes playwright@1.55.0 install --with-deps chromium || true
+          node scripts/verify-privacy.mjs
 
-      - name: Generate the native Android project
-        run: npx expo prebuild --platform android --no-install
+      - name: Prebuild the Android project
+        run: npx expo prebuild --platform android --clean --no-install
 
       - name: Build release APK
         working-directory: android
@@ -59,13 +65,13 @@ jobs:
 
       - name: Collect the APK
         run: |
-          mkdir -p artifacts
-          find android -name '*.apk' -type f
-          cp "$(find android -name '*.apk' -type f | head -1)" artifacts/zuno.apk
-          ls -lh artifacts/
+          mkdir -p dist
+          find android/app/build/outputs/apk -name '*.apk' -exec cp {} dist/zuno.apk \;
+          ls -lh dist/
+          sha256sum dist/zuno.apk | tee dist/SHA256.txt
 
       - uses: actions/upload-artifact@v4
         with:
           name: zuno-apk
-          path: artifacts/zuno.apk
+          path: dist/
           retention-days: 30
