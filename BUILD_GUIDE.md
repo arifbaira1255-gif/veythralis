@@ -118,58 +118,53 @@ build output, so the repo stays small and no keys are committed.
 
 ---
 
-## 4. Build the APK with GitHub Actions (free, no local Android SDK)
+## 4. Build the APK with GitHub Actions (free, no local Android SDK, no Expo account)
 
-This is the recommended path: GitHub's runner does the build and you download the APK from
-the run's artifacts. The workflow is already in the repo at
-**`.github/workflows/android.yml`** — you only need to add the secret and link the project.
+This is the recommended path and it needs **no secrets at all**. GitHub's runner does the
+build with Gradle directly and you download the APK from the run's artifacts. The workflow
+is already in the repo at **`.github/workflows/android.yml`**.
 
-### 4a. Get an Expo access token
-
-1. Create a free account: https://expo.dev/signup
-2. Go to https://expo.dev/settings/access-tokens → **Create token** → copy it.
-3. In your GitHub repo: **Settings → Secrets and variables → Actions → New repository
-   secret**
-   - Name: `EXPO_TOKEN`
-   - Value: the token you copied
-
-The workflow reads that secret as `secrets.EXPO_TOKEN`; nothing else needs editing.
-
-### 4b. Link the project to your Expo account once
-
-```bash
-npm install -g eas-cli
-eas login
-eas init          # answer Yes to create the project
-```
-
-This writes `extra.eas.projectId` into `app.json`. Commit that change:
-
-```bash
-git add app.json && git commit -m "link EAS project" && git push
-```
-
-### 4c. What the workflow does
+### 4a. What the workflow does
 
 On every push to `main` (or when you press **Run workflow**), it:
 
-1. checks out the repo and installs Node 20 with npm caching;
-2. runs `npm ci`;
-3. type-checks with `npx tsc --noEmit` — a type error fails the build before it costs you
-   an Expo build;
-4. authenticates EAS with your `EXPO_TOKEN`;
-5. runs `eas build --platform android --profile preview --non-interactive --wait`;
-6. downloads the finished `.apk` and uploads it as the **veythralis-apk** artifact.
+1. checks out the repo, installs Node 22, JDK 17 and the Android SDK;
+2. generates the app icon;
+3. runs `npm install`;
+4. type-checks with `npx tsc --noEmit`;
+5. verifies the JS bundle compiles with `npx expo export --platform android`;
+6. runs `npx expo prebuild --platform android` to generate the native project;
+7. runs `./gradlew assembleRelease` to build the release APK;
+8. collects the APK and uploads it as the **`zuno-apk`** artifact.
 
-### 4d. Download your APK
+### 4b. Download your APK
 
 1. Open your repo → **Actions** tab → the **Build Android APK** run.
-2. When it goes green, scroll to **Artifacts** → download **veythralis-apk**.
-3. Unzip it, copy `veythralis.apk` to your phone, tap it, and allow "install unknown apps"
+2. When it goes green, scroll to **Artifacts** → download **`zuno-apk`**.
+3. Unzip it, copy the `.apk` to your phone, tap it, and allow "install unknown apps"
    when Android asks.
 
-The first build takes ~10–20 minutes (Expo's free queue can be slower at peak times). The
-free plan includes roughly 15 Android builds per month — https://expo.dev/pricing
+The first build takes ~20–25 minutes on a cold Gradle cache; later runs are much faster
+because the Gradle cache is reused.
+
+### 4c. If the build ever goes red again
+
+The one failure this project actually hit was a native-module version mismatch:
+
+```
+[Reanimated] Your installed version of React Native (0.86.3) is not compatible
+with installed version of Reanimated (4.8.0)
+```
+
+`react-native-reanimated` was not declared in `package.json`, so npm resolved it
+transitively to 4.8.0, which requires React Native 0.87–0.89. The fix pins
+`react-native-reanimated@4.5.1`, `react-native-worklets@0.10.1` and
+`react-native-gesture-handler@~2.32.0` (the Expo SDK 57 versions) and adds an
+`overrides` block so a transitive range cannot pull a newer major again.
+Full detail in **`FIXES.md`**.
+
+**Do not remove the `overrides` block** — it is what keeps the build green. When you
+upgrade the Expo SDK, run `npx expo install --check` and let it rewrite those three pins.
 
 ---
 
@@ -201,9 +196,10 @@ download the APK. `eas.json`'s `preview` profile is already set to `buildType: a
 
 ## 7. What was and was not checked
 
-**Checked before delivery:** the code type-checks under TypeScript strict mode, and the
-Android JavaScript bundle compiles with Metro (`expo export --platform android`). Both
-passed.
+**Checked:** the code type-checks under TypeScript strict mode (`npx tsc --noEmit`),
+`npx expo-doctor` reports 21/21 checks passing, and the full GitHub Actions run
+(#23 on `main`) completed every step including `./gradlew assembleRelease` and
+uploaded the `zuno-apk` artifact (46.36 MB).
 
 **Not checked:** running on a real phone. Nothing in this environment can install or launch
 an Android app, so the WebView behaviour, the injected fingerprint script against live
@@ -217,8 +213,8 @@ before sharing it, and report anything that misbehaves with a screenshot.
 | Symptom | Fix |
 |---|---|
 | `Native module RNCWebView not found` | You are in Expo Go on a platform without the module. Build the APK (section 4). |
-| Build fails with "project not linked" | Run `eas init` and commit the `app.json` change. |
-| `EXPO_TOKEN` invalid in CI | Regenerate the token at expo.dev/settings/access-tokens and update the secret. |
+| `[Reanimated] ... not compatible with installed version of Reanimated` | The `overrides` block in `package.json` was removed or bypassed. Restore it and re-run `npm install`. |
+| `expo-doctor` reports a version mismatch | Run `npx expo install --check` and accept its rewrites. |
 | A site renders blank | It may depend on a blocked tracker host. Add the host to `AD_DELIVERY_HOSTS` in `src/lib/blocklist.ts` if it is genuinely content. |
 | Ads disappear on a site | That site serves ads from a tracker domain. Add the domain to `AD_DELIVERY_HOSTS`. |
 | Fingerprint looks unchanged | Tap **Clear all browsing data** in the shield panel — that rotates the seed. |
