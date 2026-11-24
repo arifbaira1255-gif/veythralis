@@ -6,7 +6,8 @@
   "scripts": {
     "start": "expo start",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify:privacy": "node scripts/verify-privacy.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
@@ -33,6 +34,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "playwright-core": "^1.55.0",
     "typescript": "~6.0.3"
   },
   "overrides": {
