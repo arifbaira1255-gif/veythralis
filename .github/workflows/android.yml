@@ -79,6 +79,12 @@ jobs:
       - name: Verify navigation and page integrity
         run: node scripts/verify-navigation.mjs
 
+      # The mirror is the part most likely to break silently: a replay loop does not
+      # throw, it just makes the tabs click each other forever. The loop guards are
+      # tested directly here rather than trusted.
+      - name: Verify multi-tab opener and mirror
+        run: node scripts/verify-tabsync.mjs
+
       - name: Verify JS bundle compiles
         run: npx expo export --platform android --output-dir .expo-export-check
 
