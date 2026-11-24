@@ -24,10 +24,19 @@ import {
   newSeed,
   type FingerprintProfile,
 } from '@/lib/fingerprint';
+import { PROBE_SCRIPT, parseProbeMessage } from '@/lib/fingerprint-probe';
 import { buildHeaderRules } from '@/lib/header-rules';
+import { alignToHost, applyPersona } from '@/lib/persona';
 import { headerSettingsFrom, usePrivacySettings } from '@/lib/privacy-settings';
 import { burnDelayMs, formatCountdown } from '@/lib/session-burn';
-import { addBlockedHost, createTab, type Tab } from '@/lib/tab-isolation';
+import {
+  addBlockedHost,
+  addCloaked,
+  addStrippedParams,
+  createTab,
+  type Tab,
+} from '@/lib/tab-isolation';
+import { cloakProvider, stripTrackingParams } from '@/lib/tracking-params';
 import { hostOf, isHttp, toHttps, toUrl } from '@/lib/url';
 
 /** Script that wipes this tab's namespaced storage when the user asks for a clean slate. */
@@ -65,15 +74,27 @@ export default function BrowserScreen() {
   // One profile per session. When per-tab fingerprinting is on, each tab derives its
   // own profile from the session seed plus its tab id, so two tabs never share an
   // identity — a site cannot link them even within one session.
-  const sessionProfile: FingerprintProfile = useMemo(() => buildProfile(seed), [seed]);
+  const sessionProfile: FingerprintProfile = useMemo(
+    () => applyPersona(buildProfile(seed), settings.personaMode, seed),
+    [seed, settings.personaMode],
+  );
   const profileFor = useCallback(
-    (tabId: string): FingerprintProfile =>
-      settings.perTabFingerprint ? buildProfile(`${seed}:${tabId}`) : sessionProfile,
-    [seed, sessionProfile, settings.perTabFingerprint],
+    (tabId: string, host = ''): FingerprintProfile => {
+      const base = settings.perTabFingerprint
+        ? applyPersona(buildProfile(`${seed}:${tabId}`), settings.personaMode, `${seed}:${tabId}`)
+        : sessionProfile;
+      // A site under a national TLD must not see a browser claiming another continent's
+      // timezone — that contradiction is a stronger signal than any single attribute.
+      return settings.geoCoherentPersona && host ? alignToHost(base, host) : base;
+    },
+    [seed, sessionProfile, settings.perTabFingerprint, settings.personaMode, settings.geoCoherentPersona],
   );
 
   const active = tabs.find((t) => t.id === activeId) ?? tabs[0];
-  const activeProfile = useMemo(() => profileFor(active.id), [active.id, profileFor]);
+  const activeProfile = useMemo(
+    () => profileFor(active.id, hostOf(active.url)),
+    [active.id, active.url, profileFor],
+  );
 
   const patchTab = useCallback((id: string, patch: Partial<Tab> | ((t: Tab) => Tab)) => {
     setTabs((prev) =>
@@ -89,10 +110,24 @@ export default function BrowserScreen() {
     (raw: string) => {
       const target = toUrl(raw, settings.searchEngine);
       if (!target) return;
-      const finalUrl = settings.httpsOnly ? toHttps(target) : target;
-      patchTab(activeId, { url: finalUrl, started: true, title: finalUrl, loading: true });
+      const secure = settings.httpsOnly ? toHttps(target) : target;
+      // Tracking identifiers ride in the URL, so they never reach the network at all —
+      // not blocked after the fact, but removed before the request is made.
+      const stripped = settings.stripTrackingParams
+        ? stripTrackingParams(secure)
+        : { url: secure, removed: [] };
+      if (stripped.removed.length) {
+        patchTab(activeId, (t) => addStrippedParams(t, stripped.removed));
+      }
+      patchTab(activeId, {
+        url: stripped.url,
+        started: true,
+        title: stripped.url,
+        loading: true,
+        probe: null,
+      });
     },
-    [activeId, patchTab, settings.httpsOnly, settings.searchEngine],
+    [activeId, patchTab, settings.httpsOnly, settings.searchEngine, settings.stripTrackingParams],
   );
 
   const newTab = useCallback(() => {
@@ -150,7 +185,17 @@ export default function BrowserScreen() {
     });
     // A new seed means the next page load reports a different fingerprint.
     setSeed(newSeed());
-    setTabs((prev) => prev.map((t) => ({ ...t, blocked: 0, blockedHosts: [] })));
+    setTabs((prev) =>
+      prev.map((t) => ({
+        ...t,
+        blocked: 0,
+        blockedHosts: [],
+        strippedParams: 0,
+        strippedNames: [],
+        cloaked: 0,
+        probe: null,
+      })),
+    );
     setShieldOpen(false);
   }, []);
 
@@ -179,23 +224,42 @@ export default function BrowserScreen() {
     return () => clearInterval(tick);
   }, [settings.burnInterval, clearAll]);
 
-  // ---- navigation gate: tracker blocking + HTTPS-only ----
+  // ---- navigation gate: tracking-param stripping, tracker + CNAME blocking, HTTPS-only ----
   const onShouldStart = useCallback(
     (url: string): boolean => {
       if (!/^https?:/i.test(url)) return true; // about:, data:, blob: — let the WebView handle it
       if (settings.httpsOnly && isHttp(url)) {
         // Upgrade in place rather than blocking, so the page still loads securely.
-        patchTab(activeId, { url: toHttps(url) });
+        const upgraded = toHttps(url);
+        patchTab(activeId, {
+          url: settings.stripTrackingParams
+            ? stripTrackingParams(upgraded).url
+            : upgraded,
+        });
+        return false;
+      }
+      if (settings.stripTrackingParams) {
+        const { url: clean, removed } = stripTrackingParams(url);
+        if (removed.length) {
+          patchTab(activeId, (t) => addStrippedParams(t, removed));
+          patchTab(activeId, { url: clean });
+          return false;
+        }
+      }
+      const host = hostOf(url);
+      // CNAME-cloaked analytics looks first-party, so it is checked before the
+      // domain blocklist — otherwise it sails straight through.
+      if (settings.blockCnameCloaking && cloakProvider(host)) {
+        patchTab(activeId, (t) => addCloaked(t));
         return false;
       }
       if (shouldBlock(url)) {
-        const host = hostOf(url);
         patchTab(activeId, (t) => addBlockedHost(t, host));
         return false;
       }
       return true;
     },
-    [activeId, patchTab, settings.httpsOnly],
+    [activeId, patchTab, settings.httpsOnly, settings.stripTrackingParams, settings.blockCnameCloaking],
   );
 
   const onNavChange = useCallback(
@@ -215,6 +279,51 @@ export default function BrowserScreen() {
   const headerRules = useMemo(
     () => buildHeaderRules(headerSettingsFrom(settings)),
     [settings],
+  );
+
+  // ---- live probe ----
+  // Run the measuring script inside the active tab. It reports what the page actually
+  // sees, which is the only way to know whether the armor is really on.
+  const runProbe = useCallback(() => {
+    const target = webviews.current[activeId];
+    if (!target) return;
+    patchTab(activeId, { probing: true });
+    try {
+      target.injectJavaScript(PROBE_SCRIPT);
+    } catch {
+      patchTab(activeId, { probing: false });
+    }
+  }, [activeId, patchTab]);
+
+  const onMessage = useCallback(
+    (tabId: string, raw: string) => {
+      const parsed = parseProbeMessage(raw);
+      if (!parsed) return;
+      if (parsed.kind === 'probe') {
+        patchTab(tabId, { probe: parsed.result, probing: false });
+      } else if (parsed.kind === 'blocked') {
+        patchTab(tabId, (t) => addBlockedHost(t, parsed.host));
+      }
+    },
+    [patchTab],
+  );
+
+  // Probe once per page load, automatically: a privacy tool that only measures when you
+  // remember to press a button hides its own failures.
+  const onLoadEndFor = useCallback(
+    (tabId: string) => {
+      patchTab(tabId, { loading: false });
+      if (!settings.liveProbe) return;
+      const target = webviews.current[tabId];
+      if (!target) return;
+      patchTab(tabId, { probing: true });
+      try {
+        target.injectJavaScript(PROBE_SCRIPT);
+      } catch {
+        patchTab(tabId, { probing: false });
+      }
+    },
+    [patchTab, settings.liveProbe],
   );
 
   if (settingsStatus === 'loading') {
@@ -295,7 +404,7 @@ export default function BrowserScreen() {
               />
             ) : null;
           }
-          const tabProfile = profileFor(tab.id);
+          const tabProfile = profileFor(tab.id, hostOf(tab.url));
           const injection = settings.randomizeFingerprint
             ? buildInjectionScript(tabProfile, tab.id, {
                 blockWebRtc: settings.blockWebRtcLeak,
@@ -334,8 +443,9 @@ export default function BrowserScreen() {
                 onShouldStartLoadWithRequest={(req) => onShouldStart(req.url)}
                 onNavigationStateChange={isActive ? onNavChange : undefined}
                 onLoadStart={() => patchTab(tab.id, { loading: true })}
-                onLoadEnd={() => patchTab(tab.id, { loading: false })}
+                onLoadEnd={() => onLoadEndFor(tab.id)}
                 onError={() => patchTab(tab.id, { loading: false })}
+                onMessage={(e) => onMessage(tab.id, e.nativeEvent.data)}
                 style={{ backgroundColor: colors.background }}
               />
             </View>
@@ -404,6 +514,7 @@ export default function BrowserScreen() {
         burnRemaining={burnRemaining}
         onClose={() => setShieldOpen(false)}
         onClear={clearAll}
+        onProbe={runProbe}
       />
     </SafeAreaView>
   );
