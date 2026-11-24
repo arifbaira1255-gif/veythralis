@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "verify:privacy": "node scripts/verify-privacy.mjs",
     "verify:navigation": "node scripts/verify-navigation.mjs",
-    "verify": "npm run typecheck && npm run verify:privacy && npm run verify:navigation"
+    "verify:tabsync": "node scripts/verify-tabsync.mjs",
+    "verify": "npm run typecheck && npm run verify:privacy && npm run verify:navigation && npm run verify:tabsync"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
