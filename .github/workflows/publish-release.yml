@@ -1,0 +1,73 @@
+name: Publish APK to release
+
+# Attaches the APK from a build run to a GitHub Release.
+#
+# Why this exists as its own workflow: the build job produces the APK as a workflow
+# artifact, and an artifact is a ZIP. Attaching that ZIP to a release under the name
+# "zuno.apk" gives the user a file that looks like an APK and is not one. This job
+# downloads the artifact, unpacks it, and uploads the real APK bytes.
+#
+# It runs on the repo's own GITHUB_TOKEN, so no personal token is involved and the
+# release can be republished at any time without a rebuild.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Workflow run id that holds the zuno-apk artifact'
+        required: true
+        type: string
+      tag:
+        description: 'Release tag to attach the APK to'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the APK artifact from the build run
+        uses: actions/download-artifact@v4
+        with:
+          name: zuno-apk
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: out
+
+      - name: Show what was downloaded
+        run: ls -lh out
+
+      # The artifact is a ZIP; the release needs the APK inside it.
+      - name: Unpack the artifact
+        run: |
+          set -euo pipefail
+          cd out
+          if [ -f zuno.apk ] && file zuno.apk | grep -q 'Zip archive'; then
+            echo "artifact is a zip; extracting"
+            unzip -o -q zuno.apk
+          fi
+          ls -lh
+          file zuno.apk
+          sha256sum zuno.apk | tee SHA256.txt
+
+      # Any asset already on the release is removed first, so a wrong or stale file
+      # cannot survive alongside the correct one and confuse the download.
+      - name: Replace the release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          gh release view "$TAG" --json assets --jq '.assets[].name' | while read -r n; do
+            if [ -n "$n" ]; then
+              echo "removing existing asset: $n"
+              gh release delete-asset "$TAG" "$n" -y || true
+            fi
+          done
+          gh release upload "$TAG" out/zuno.apk out/SHA256.txt --clobber
+          echo "--- release assets now ---"
+          gh release view "$TAG" --json assets --jq '.assets[] | "\(.name)  \(.size) bytes"'
