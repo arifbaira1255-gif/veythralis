@@ -1,5 +1,12 @@
 name: Build Android APK
 
+# This workflow builds the APK with Gradle directly, on GitHub's own runner.
+# It needs NO Expo account and NO token: the runner already has the Android SDK and
+# Java, so `expo prebuild` generates the native project and Gradle compiles it.
+#
+# Expo's generated android/app/build.gradle signs the release build with the debug
+# keystore, so the resulting APK is signed and installs on any phone.
+
 on:
   push:
     branches: [main]
@@ -11,10 +18,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # eas-cli 27 requires Node 22 or newer; Node 20 fails at `yarn add eas-cli`.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
 
       - uses: actions/setup-python@v5
         with:
@@ -37,24 +48,21 @@ jobs:
       - name: Verify JS bundle compiles
         run: npx expo export --platform android --output-dir .expo-export-check
 
-      - name: Set up EAS
-        uses: expo/expo-github-action@v8
-        with:
-          eas-version: latest
-          # The repository secret may be named either way; both are accepted.
-          token: ${{ secrets.EXPO_TOKEN || secrets.VEYTHRALISARIFBAIRA }}
+      - name: Generate the native Android project
+        run: npx expo prebuild --platform android --no-install
 
-      - name: Build APK
-        run: eas build --platform android --profile preview --non-interactive --wait
+      - name: Build release APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace
 
-      - name: Download APK artifact
+      - name: Collect the APK
         run: |
           mkdir -p artifacts
-          eas build:list --platform android --limit 1 --json --non-interactive \
-            | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const b=JSON.parse(s)[0];console.log(b.artifacts.buildUrl)})" \
-            > artifacts/url.txt
-          curl -L --fail -o artifacts/zuno.apk "$(cat artifacts/url.txt)"
-          ls -lh artifacts/zuno.apk
+          find android -name '*.apk' -type f
+          cp "$(find android -name '*.apk' -type f | head -1)" artifacts/zuno.apk
+          ls -lh artifacts/
 
       - uses: actions/upload-artifact@v4
         with:
