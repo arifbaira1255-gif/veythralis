@@ -16,6 +16,8 @@ import {
   type ResidentialEndpoint,
 } from '@/lib/proxy';
 import { BURN_OPTIONS, type BurnInterval } from '@/lib/session-burn';
+import { requestOpenInTabs } from '@/lib/open-request';
+import { clampOpenCount, DEFAULT_OPEN_COUNT, MAX_OPEN_COUNT, MIN_OPEN_COUNT } from '@/lib/tab-sync';
 import { SEARCH_ENGINES, type SearchEngine } from '@/lib/url';
 
 /**
@@ -150,6 +152,10 @@ export default function SettingsScreen() {
   const [refreshError, setRefreshError] = useState<string | null>(null);
   const [epDraft, setEpDraft] = useState<ResidentialEndpoint>(settings.residentialEndpoint);
   const [epError, setEpError] = useState<string | null>(null);
+  const [openUrl, setOpenUrl] = useState('');
+  const [openCount, setOpenCount] = useState(DEFAULT_OPEN_COUNT);
+  const [openError, setOpenError] = useState<string | null>(null);
+  const [openQueued, setOpenQueued] = useState(false);
 
   const set = <K extends keyof PrivacySettings>(key: K, value: PrivacySettings[K]) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
@@ -180,6 +186,17 @@ export default function SettingsScreen() {
     }
     setEpError(null);
     set('residentialEndpoint', epDraft);
+  };
+
+  const sendToTabs = () => {
+    const raw = openUrl.trim();
+    if (!raw) {
+      setOpenError('Enter a URL or a search term.');
+      return;
+    }
+    setOpenError(null);
+    requestOpenInTabs(raw, clampOpenCount(openCount));
+    setOpenQueued(true);
   };
 
   return (
@@ -251,6 +268,71 @@ export default function SettingsScreen() {
             </Pressable>
           );
         })}
+      </View>
+
+      <Text style={[styles.section, { color: colors.muted }]}>OPEN ONE URL IN MANY TABS</Text>
+      <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <Text style={[styles.rowDetail, { color: colors.muted, padding: spacing.md }]}>
+          Enter a URL and pick how many tabs to open it in. Every tab loads the same page as
+          a different person: its own user agent, its own Windows machine, its own US
+          timezone, its own canvas and WebGL noise, its own cookie jar. Then mirroring lets
+          you drive them all from one tab.
+        </Text>
+        <View style={[styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}>
+          <TextInput
+            value={openUrl}
+            onChangeText={(t) => {
+              setOpenUrl(t);
+              setOpenError(null);
+              setOpenQueued(false);
+            }}
+            placeholder="example.com or a search term"
+            placeholderTextColor={colors.muted}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            accessibilityLabel="URL to open in many tabs"
+            style={[styles.input, { color: colors.text, borderColor: colors.border }]}
+          />
+        </View>
+        <View style={[styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}>
+          <View style={styles.rowText}>
+            <Text style={[styles.rowTitle, { color: colors.text }]}>Tabs: {openCount}</Text>
+            <Text style={[styles.rowDetail, { color: colors.muted }]}>
+              {MIN_OPEN_COUNT}–{MAX_OPEN_COUNT}. Each one is a separate identity.
+            </Text>
+          </View>
+          <View style={styles.stepper}>
+            <Pressable
+              onPress={() => setOpenCount((c) => clampOpenCount(c - 1))}
+              accessibilityLabel="Fewer tabs"
+              style={[styles.stepBtn, { borderColor: colors.border }]}>
+              <Ionicons name="remove" size={16} color={colors.text} />
+            </Pressable>
+            <Pressable
+              onPress={() => setOpenCount((c) => clampOpenCount(c + 1))}
+              accessibilityLabel="More tabs"
+              style={[styles.stepBtn, { borderColor: colors.border }]}>
+              <Ionicons name="add" size={16} color={colors.text} />
+            </Pressable>
+          </View>
+        </View>
+        <View style={[styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}>
+          <View style={styles.rowText}>
+            <Text style={[styles.rowDetail, { color: colors.muted }]}>
+              {openQueued
+                ? 'Queued. Open the Browser tab to see them load.'
+                : 'Opens in the Browser tab, with mirroring on.'}
+            </Text>
+          </View>
+          <Pressable
+            onPress={sendToTabs}
+            accessibilityRole="button"
+            style={[styles.applyBtn, { backgroundColor: colors.primary }]}>
+            <Text style={[styles.applyText, { color: colors.onPrimary }]}>Send</Text>
+          </Pressable>
+        </View>
+        {openError ? <Text style={[styles.error, { color: colors.danger }]}>{openError}</Text> : null}
       </View>
 
       <Text style={[styles.section, { color: colors.muted }]}>AUTO-REFRESH &amp; IDENTITY ROTATION</Text>
@@ -537,4 +619,13 @@ const styles = StyleSheet.create({
     marginRight: spacing.sm,
   },
   schemeText: { fontSize: 13, fontWeight: '700' },
+  stepper: { flexDirection: 'row', gap: 8 },
+  stepBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });
