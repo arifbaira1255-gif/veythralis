@@ -15,17 +15,33 @@ jobs:
         with:
           node-version: 20
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # The app icon is generated from source (tools/make_icon.py) rather than committed
+      # as a binary, so it is always reproducible and never drifts from the brand colours.
+      - name: Generate app icon
+        run: |
+          pip install --quiet pillow numpy
+          python3 tools/make_icon.py
+          ls -lh assets/images/
+
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
       - name: Type-check
         run: npx tsc --noEmit
 
+      - name: Verify JS bundle compiles
+        run: npx expo export --platform android --output-dir .expo-export-check
+
       - name: Set up EAS
         uses: expo/expo-github-action@v8
         with:
           eas-version: latest
-          token: ${{ secrets.EXPO_TOKEN }}
+          # The repository secret may be named either way; both are accepted.
+          token: ${{ secrets.EXPO_TOKEN || secrets.VEYTHRALISARIFBAIRA }}
 
       - name: Build APK
         run: eas build --platform android --profile preview --non-interactive --wait
@@ -36,9 +52,11 @@ jobs:
           eas build:list --platform android --limit 1 --json --non-interactive \
             | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const b=JSON.parse(s)[0];console.log(b.artifacts.buildUrl)})" \
             > artifacts/url.txt
-          curl -L -o artifacts/veythralis.apk "$(cat artifacts/url.txt)"
+          curl -L --fail -o artifacts/zuno.apk "$(cat artifacts/url.txt)"
+          ls -lh artifacts/zuno.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: veythralis-apk
-          path: artifacts/veythralis.apk
+          name: zuno-apk
+          path: artifacts/zuno.apk
+          retention-days: 30
