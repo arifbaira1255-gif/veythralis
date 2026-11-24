@@ -11,7 +11,7 @@ import { BURN_OPTIONS, type BurnInterval } from '@/lib/session-burn';
 import { SEARCH_ENGINES, type SearchEngine } from '@/lib/url';
 
 type ToggleKey = {
-  key: keyof Omit<PrivacySettings, 'searchEngine' | 'burnInterval'>;
+  key: keyof Omit<PrivacySettings, 'searchEngine' | 'burnInterval' | 'personaMode'>;
   title: string;
   detail: string;
   icon:
@@ -24,7 +24,11 @@ type ToggleKey = {
     | 'hand-left-outline'
     | 'git-network-outline'
     | 'time-outline'
-    | 'albums-outline';
+    | 'albums-outline'
+    | 'cut-outline'
+    | 'eye-outline'
+    | 'compass-outline'
+    | 'scan-outline';
 };
 
 const TOGGLES: ToggleKey[] = [
@@ -64,6 +68,34 @@ const TOGGLES: ToggleKey[] = [
     title: 'Separate identity per tab',
     detail: 'Give every tab its own fingerprint, so two tabs cannot be linked to each other.',
     icon: 'albums-outline',
+  },
+  {
+    key: 'liveProbe',
+    title: 'Live fingerprint probe',
+    detail:
+      'Measure the fingerprint from inside each page and show what the site actually sees — so you can verify the camouflage, not just trust it.',
+    icon: 'scan-outline',
+  },
+  {
+    key: 'geoCoherentPersona',
+    title: 'Region-coherent persona',
+    detail:
+      'Match timezone and language to the country of the site you visit, so no contradictory signal betrays you.',
+    icon: 'compass-outline',
+  },
+  {
+    key: 'stripTrackingParams',
+    title: 'Strip tracking parameters',
+    detail:
+      'Remove utm_*, fbclid, gclid, igshid and similar identifiers from every URL before it is requested.',
+    icon: 'cut-outline',
+  },
+  {
+    key: 'blockCnameCloaking',
+    title: 'Block CNAME-cloaked analytics',
+    detail:
+      'Catch third-party analytics served from a first-party-looking subdomain, which a domain blocklist never sees.',
+    icon: 'eye-outline',
   },
   {
     key: 'globalPrivacyControl',
