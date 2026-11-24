@@ -27,6 +27,7 @@
     },
     "plugins": [
       "expo-router",
+      "./tools/with-network-hardening.js",
       [
         "expo-splash-screen",
         {
