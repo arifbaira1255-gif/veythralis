@@ -1,23 +1,26 @@
 {
   "expo": {
-    "name": "Veythralis",
-    "slug": "veythralis",
-    "version": "2.0.0",
+    "name": "Zuno",
+    "slug": "zuno-browser",
+    "version": "3.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "veythralis",
+    "scheme": "zuno",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "bundleIdentifier": "com.veythralis.browser",
+      "bundleIdentifier": "com.zuno.browser",
       "supportsTablet": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
-      "package": "com.veythralis.browser",
+      "package": "com.zuno.browser",
       "permissions": ["android.permission.INTERNET"],
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "adaptiveIcon": {
+        "backgroundColor": "#08080E"
+      }
     },
     "web": {
       "output": "single"
@@ -27,7 +30,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#0B0A14",
+          "backgroundColor": "#08080E",
           "image": "./assets/images/icon.png",
           "imageWidth": 120
         }

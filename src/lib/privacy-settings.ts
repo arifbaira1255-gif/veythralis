@@ -1,6 +1,7 @@
 import { usePersistentState } from '@/hooks/use-persistent-state';
 
 import { DEFAULT_HEADER_SETTINGS, type HeaderSettings } from './header-rules';
+import type { PersonaMode } from './persona';
 import type { BurnInterval } from './session-burn';
 import type { SearchEngine } from './url';
 
@@ -29,6 +30,16 @@ export type PrivacySettings = {
   coarsenTimers: boolean;
   /** Which search engine the address bar uses for non-URL input. */
   searchEngine: SearchEngine;
+  /** Blend into a common device cohort, or rotate through a wide identity space. */
+  personaMode: PersonaMode;
+  /** Remove utm_*, fbclid, gclid and friends from every URL before it is requested. */
+  stripTrackingParams: boolean;
+  /** Make the timezone and locale match the country of the site being visited. */
+  geoCoherentPersona: boolean;
+  /** Measure the fingerprint from inside the page and show what the site really sees. */
+  liveProbe: boolean;
+  /** Block CNAME-cloaked analytics endpoints that look like first-party subdomains. */
+  blockCnameCloaking: boolean;
 };
 
 export const DEFAULT_SETTINGS: PrivacySettings = {
@@ -44,6 +55,11 @@ export const DEFAULT_SETTINGS: PrivacySettings = {
   blockWebRtcLeak: true,
   coarsenTimers: true,
   searchEngine: 'duckduckgo',
+  personaMode: 'blend',
+  stripTrackingParams: true,
+  geoCoherentPersona: true,
+  liveProbe: true,
+  blockCnameCloaking: true,
 };
 
 /** The DoH resolver used when DNS-over-HTTPS is on. */

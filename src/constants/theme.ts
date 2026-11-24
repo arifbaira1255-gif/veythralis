@@ -1,9 +1,9 @@
 import { useColorScheme } from 'react-native';
 
 /**
- * Veythralis palette. Near-black ink surfaces with an electric indigo accent and a
- * mint "protected" state, so the shield reads at a glance without shouting. The dark
- * theme is the primary one — a privacy tool should not glow.
+ * Zuno palette. Near-black ink surfaces with an electric indigo accent and a mint
+ * "protected" state, so the shield reads at a glance without shouting. The dark theme is
+ * the primary one — a privacy tool should not glow.
  */
 const palette = {
   light: {
@@ -54,7 +54,8 @@ export const radius = { sm: 8, md: 12, lg: 16, pill: 999 };
 
 /** Brand constants, so the name lives in exactly one place. */
 export const BRAND = {
-  name: 'Veythralis',
-  tagline: 'Browse without being profiled.',
-  version: '2.0.0',
+  name: 'Zuno',
+  tagline: 'Private by design. Verified by you.',
+  version: '3.0.0',
+  legal: 'Zuno does not log, sync or upload your browsing.',
 };
