@@ -8,9 +8,10 @@
  * certificate differs from the installed app — which is one of the ways a perfectly good
  * APK ends up reporting "This app was not installed".
  *
- * This script runs after prebuild and rewrites the signing config so the release build
- * uses android-keystore/zuno-release.keystore. It is idempotent and fails loudly if the
- * template ever changes shape, rather than silently producing an unsigned APK.
+ * This script runs after prebuild. It materialises the release keystore from its tracked
+ * base64 form and rewrites the signing config so the release build is signed with it.
+ * It is idempotent and fails loudly if the template ever changes shape, rather than
+ * silently producing an unsigned APK.
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -18,14 +19,43 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const gradlePath = resolve(root, 'android/app/build.gradle');
+
+// The keystore is committed as base64 text (…keystore.b64) rather than as a binary blob:
+// base64 survives every transport, editor and API path unmodified, while a binary file
+// pushed through a text API silently corrupts and then fails at signing time with an
+// unreadable-keystore error that is hard to trace back. The real binary is materialised
+// here, on disk, right before the build needs it.
 const keystorePath = resolve(root, 'android-keystore/zuno-release.keystore');
+const keystoreB64Path = resolve(root, 'android-keystore/zuno-release.keystore.b64');
 
 if (!existsSync(gradlePath)) {
   console.error(`patch-android-signing: ${gradlePath} not found — run expo prebuild first.`);
   process.exit(1);
 }
-if (!existsSync(keystorePath)) {
-  console.error(`patch-android-signing: ${keystorePath} not found — the release keystore is missing.`);
+
+// Always materialise the binary from the .b64 when the .b64 is present, overwriting
+// whatever is already at keystorePath. Preferring the .b64 unconditionally means a stale
+// or corrupted binary left in the tree can never be used by mistake: the tracked base64
+// is the single source of truth.
+if (existsSync(keystoreB64Path)) {
+  const b64 = readFileSync(keystoreB64Path, 'utf8').replace(/\s+/g, '');
+  const bytes = Buffer.from(b64, 'base64');
+  // A valid PKCS12 store is a few KB; anything tiny means the base64 itself is damaged,
+  // and building on it would just fail deeper in with a much worse error.
+  if (bytes.length < 512) {
+    console.error(
+      `patch-android-signing: decoded keystore is only ${bytes.length} bytes ` +
+        '— the base64 source looks truncated.',
+    );
+    process.exit(1);
+  }
+  writeFileSync(keystorePath, bytes);
+  console.log(`patch-android-signing: keystore decoded from .b64 (${bytes.length} bytes)`);
+} else if (!existsSync(keystorePath)) {
+  console.error(
+    `patch-android-signing: neither ${keystorePath} nor ${keystoreB64Path} exists ` +
+      '— the release keystore is missing.',
+  );
   process.exit(1);
 }
 
