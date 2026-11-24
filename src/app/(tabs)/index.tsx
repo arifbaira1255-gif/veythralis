@@ -107,6 +107,8 @@ export default function BrowserScreen() {
       }
       patchTab(activeId, {
         url: stripped.url,
+        loadUri: stripped.url,
+        loadNonce: Date.now(),
         started: true,
         title: stripped.url,
         loading: true,
@@ -233,29 +235,29 @@ export default function BrowserScreen() {
         return;
       }
       // Order matters: purge while the page still exists, rotate the identity, then
-      // reload so the next request is made by the new persona.
+      // re-issue the load so the next request is made by the new persona. The nonce
+      // bump is what makes the rotation real: a plain reload() keeps the injection
+      // script that was already applied, so the site would see the OLD fingerprint
+      // again. Remounting the WebView re-runs the injection with the new profile.
       startedAt = Date.now();
       setRefreshRemaining(totalMs);
       purgeTab(activeId);
       rotateIdentity();
-      const wv = webviews.current[activeId];
-      if (wv) {
-        try {
-          wv.reload();
-        } catch {
-          // Nothing to reload.
-        }
-      }
+      patchTab(activeId, (t) => ({ ...t, loadNonce: Date.now() }));
     }, 1000);
     return () => clearInterval(tick);
-  }, [settings.autoRefresh, activeId, purgeTab, rotateIdentity]);
+  }, [settings.autoRefresh, activeId, purgeTab, rotateIdentity, patchTab]);
 
   // ---- manual reload ----
-  // With rotateOnReload on, a manual reload is also a new identity.
+  // With rotateOnReload on, a manual reload is also a new identity, so it goes through
+  // the same remount path as the auto-refresh. With it off, a plain reload() is used,
+  // which keeps the page's own history and scroll position.
   const reloadActive = useCallback(() => {
     if (settings.rotateOnReload) {
       purgeTab(activeId);
       rotateIdentity();
+      patchTab(activeId, (t) => ({ ...t, loadNonce: Date.now() }));
+      return;
     }
     const wv = webviews.current[activeId];
     if (wv) {
@@ -265,7 +267,7 @@ export default function BrowserScreen() {
         // Nothing to reload.
       }
     }
-  }, [activeId, purgeTab, rotateIdentity, settings.rotateOnReload]);
+  }, [activeId, patchTab, purgeTab, rotateIdentity, settings.rotateOnReload]);
 
   // ---- session burn timer ----
   // A hard ceiling on session lifetime, counted from the last reset. When it expires
@@ -293,24 +295,34 @@ export default function BrowserScreen() {
   }, [settings.burnInterval, clearAll]);
 
   // ---- navigation gate: tracking-param stripping, tracker + CNAME blocking, HTTPS-only ----
+  //
+  // Every branch that rewrites a URL must return false AND set `loadUri`, because
+  // returning false cancels the navigation the WebView was about to make. The first
+  // version returned false and patched only `url` — the address bar changed, the
+  // WebView never loaded anything, and the page appeared to "go somewhere else" or
+  // hang. Setting `loadUri` is what actually performs the rewritten navigation.
+  //
+  // The nonce must be bumped in the same patch. If the rewritten URL happens to equal
+  // the one already in `loadUri`, React sees an identical `source` prop and the WebView
+  // does nothing at all: the navigation was cancelled and nothing replaced it, so the
+  // page simply hangs. A fresh nonce forces the load.
   const onShouldStart = useCallback(
     (url: string): boolean => {
       if (!/^https?:/i.test(url)) return true; // about:, data:, blob: — let the WebView handle it
       if (settings.httpsOnly && isHttp(url)) {
         // Upgrade in place rather than blocking, so the page still loads securely.
         const upgraded = toHttps(url);
-        patchTab(activeId, {
-          url: settings.stripTrackingParams
-            ? stripTrackingParams(upgraded).url
-            : upgraded,
-        });
+        const clean = settings.stripTrackingParams
+          ? stripTrackingParams(upgraded).url
+          : upgraded;
+        patchTab(activeId, { url: clean, loadUri: clean, loadNonce: Date.now() });
         return false;
       }
       if (settings.stripTrackingParams) {
         const { url: clean, removed } = stripTrackingParams(url);
         if (removed.length) {
           patchTab(activeId, (t) => addStrippedParams(t, removed));
-          patchTab(activeId, { url: clean });
+          patchTab(activeId, { url: clean, loadUri: clean, loadNonce: Date.now() });
           return false;
         }
       }
@@ -499,10 +511,14 @@ export default function BrowserScreen() {
               style={[StyleSheet.absoluteFill, { opacity: isActive ? 1 : 0 }]}
               pointerEvents={isActive ? 'auto' : 'none'}>
               <WebView
+                // The nonce is part of the key on purpose: bumping it remounts the
+                // WebView, which is the only way a rotated fingerprint is actually
+                // applied (the injection script runs once per document).
+                key={`${tab.id}:${tab.loadNonce}`}
                 ref={(r) => {
                   webviews.current[tab.id] = r;
                 }}
-                source={{ uri: tab.url, headers: requestHeaders }}
+                source={{ uri: tab.loadUri, headers: requestHeaders }}
                 // incognito: nothing is written to the app's persistent cookie jar, so
                 // closing the tab discards its cookies and cache.
                 incognito
@@ -565,7 +581,7 @@ export default function BrowserScreen() {
             <Ionicons name="refresh" size={22} color={colors.text} />
           </Pressable>
           <Pressable
-            onPress={() => patchTab(active.id, { url: '', started: false, title: 'New tab' })}
+            onPress={() => patchTab(active.id, { url: '', loadUri: '', loadNonce: Date.now(), started: false, title: 'New tab' })}
             hitSlop={8}
             accessibilityLabel="Home"
             style={styles.navButton}>
