@@ -1,5 +1,5 @@
 /**
- * Persona engine — the part that makes Zuno behave differently from every other
+ * Persona engine - the part that makes Zuno behave differently from every other
  * "randomize my fingerprint" browser.
  *
  * The problem nobody talks about: **naive randomization makes you more identifiable,
@@ -10,18 +10,41 @@
  *
  * Zuno therefore offers two independent strategies:
  *
- *   BLEND  — draw from the *most populated* device cohorts, so the persona you present
+ *   BLEND  - draw from the *most populated* device cohorts, so the persona you present
  *            is shared by millions of other devices. This is the Tor Browser strategy:
  *            uniformity beats false uniqueness. It is the default.
  *
- *   ROTATE — draw from a wide space so a returning tracker cannot link two sessions.
+ *   ROTATE - draw from a wide space so a returning tracker cannot link two sessions.
  *            Stronger against long-term correlation, weaker against per-session
  *            uniqueness. For when you care about being unlinkable more than blending in.
  *
- * On top of that, personas are **geo-coherent**: a site under a national TLD gets a
- * timezone and locale that actually matches that country. A German site seeing a
- * browser in Asia/Shanghai with an en-US locale is a stronger signal than a generic
- * fingerprint — so we remove that contradiction rather than create it.
+ * ---------------------------------------------------------------------------------------
+ * WINDOWS ONLY, AND THAT IS A DELIBERATE CHOICE
+ * ---------------------------------------------------------------------------------------
+ * Every persona this engine produces is a **Windows desktop**. Never a phone, never a
+ * Mac, never Linux. Two reasons, and the second is the important one:
+ *
+ *   1. Windows is the single largest desktop cohort on the web, so a Windows persona is
+ *      the least unusual thing you can be.
+ *
+ *   2. A phone-shaped fingerprint is a *contradiction* on this device. Zuno runs inside
+ *      an Android WebView, and the WebView's own engine reports Android-shaped values
+ *      for a long tail of surfaces that no in-page script can reach (TLS/JA3, the
+ *      Sec-CH-UA-Platform the network stack sends, the touch/pointer model, the
+ *      viewport behaviour). Claiming to be an iPhone while the transport says Android is
+ *      a stronger signal than any single attribute - it is a fingerprint that says
+ *      "this is a spoofed browser", which is the worst possible answer. Presenting a
+ *      Windows desktop is the one identity whose *declared* surfaces we can make
+ *      internally consistent, and consistency is what actually defeats fingerprinting.
+ *
+ * The honest limit, stated in the app too: the transport layer still says Android. This
+ * engine makes the *page-visible* identity a coherent Windows machine; it cannot change
+ * what the TLS handshake reveals. That is a native-layer problem, not a script problem.
+ *
+ * Personas are also **geo-coherent**: the timezone and locale are always United States,
+ * and they rotate on every refresh, so a returning visit is a different US machine in a
+ * different US timezone. A US timezone with a German locale would be a contradiction, so
+ * the locale table is US-only for the same reason the platform table is Windows-only.
  */
 
 import type { FingerprintProfile } from './fingerprint';
@@ -32,22 +55,28 @@ export const PERSONA_MODE_LABEL: Record<PersonaMode, { title: string; detail: st
   blend: {
     title: 'Blend into the crowd',
     detail:
-      'Present the most common device profile on the web, so you look like millions of other people instead of a unique machine.',
+      'Present the most common Windows desktop profile on the web, so you look like millions of other people instead of a unique machine.',
   },
   rotate: {
     title: 'Rotate identity',
     detail:
-      'Draw a different profile from a wide space each session, so a tracker cannot link two visits to the same device.',
+      'Draw a different Windows machine from a wide space each session, so a tracker cannot link two visits to the same device.',
   },
 };
 
 /**
- * The most populated desktop device cohorts. Percentages are rough shares of the
- * desktop web; the engine weights towards the top so a blended persona lands in a
- * large crowd.
+ * The most populated Windows desktop cohorts. Percentages are rough shares of the
+ * Windows desktop web; the engine weights towards the top so a blended persona lands in
+ * a large crowd.
+ *
+ * chPlatformVersion is what Chrome actually reports through User-Agent Client Hints for
+ * that Windows release - Windows 10 reports 10.0.0, Windows 11 reports 15.0.0. These are
+ * kept in the table rather than derived, because the mapping is not arithmetic and a
+ * wrong guess here is exactly the kind of contradiction this file exists to avoid.
  */
 export const COHORT_PROFILES: readonly {
   weight: number;
+  winVersion: string;
   platform: string;
   vendor: string;
   screen: readonly [number, number];
@@ -58,9 +87,11 @@ export const COHORT_PROFILES: readonly {
   webglVendor: string;
   webglRenderer: string;
   maxTextureSize: number;
+  chPlatformVersion: string;
 }[] = [
   {
-    weight: 26,
+    weight: 22,
+    winVersion: 'Windows 11',
     platform: 'Win32',
     vendor: 'Google Inc.',
     screen: [1920, 1080],
@@ -71,9 +102,26 @@ export const COHORT_PROFILES: readonly {
     webglVendor: 'Google Inc. (Intel)',
     webglRenderer: 'ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)',
     maxTextureSize: 16384,
+    chPlatformVersion: '15.0.0',
   },
   {
-    weight: 19,
+    weight: 16,
+    winVersion: 'Windows 10',
+    platform: 'Win32',
+    vendor: 'Google Inc.',
+    screen: [1920, 1080],
+    colorDepth: 24,
+    devicePixelRatio: 1,
+    hardwareConcurrency: 8,
+    deviceMemory: 8,
+    webglVendor: 'Google Inc. (Intel)',
+    webglRenderer: 'ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)',
+    maxTextureSize: 16384,
+    chPlatformVersion: '10.0.0',
+  },
+  {
+    weight: 14,
+    winVersion: 'Windows 11',
     platform: 'Win32',
     vendor: 'Google Inc.',
     screen: [1536, 864],
@@ -84,61 +132,11 @@ export const COHORT_PROFILES: readonly {
     webglVendor: 'Google Inc. (NVIDIA)',
     webglRenderer: 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11 vs_5_0 ps_5_0, D3D11)',
     maxTextureSize: 16384,
+    chPlatformVersion: '15.0.0',
   },
   {
-    weight: 14,
-    platform: 'MacIntel',
-    vendor: 'Apple Computer, Inc.',
-    screen: [1440, 900],
-    colorDepth: 30,
-    devicePixelRatio: 2,
-    hardwareConcurrency: 8,
-    deviceMemory: 8,
-    webglVendor: 'Google Inc. (Apple)',
-    webglRenderer: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M1, Unspecified Version)',
-    maxTextureSize: 16384,
-  },
-  {
-    weight: 11,
-    platform: 'MacIntel',
-    vendor: 'Apple Computer, Inc.',
-    screen: [1512, 982],
-    colorDepth: 30,
-    devicePixelRatio: 2,
-    hardwareConcurrency: 10,
-    deviceMemory: 16,
-    webglVendor: 'Google Inc. (Apple)',
-    webglRenderer: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M2, Unspecified Version)',
-    maxTextureSize: 16384,
-  },
-  {
-    weight: 9,
-    platform: 'Win32',
-    vendor: 'Google Inc.',
-    screen: [2560, 1440],
-    colorDepth: 24,
-    devicePixelRatio: 1,
-    hardwareConcurrency: 12,
-    deviceMemory: 16,
-    webglVendor: 'Google Inc. (AMD)',
-    webglRenderer: 'ANGLE (AMD, AMD Radeon RX 6600 Direct3D11 vs_5_0 ps_5_0, D3D11)',
-    maxTextureSize: 16384,
-  },
-  {
-    weight: 8,
-    platform: 'Linux x86_64',
-    vendor: 'Google Inc.',
-    screen: [1920, 1080],
-    colorDepth: 24,
-    devicePixelRatio: 1,
-    hardwareConcurrency: 8,
-    deviceMemory: 8,
-    webglVendor: 'Google Inc. (Mesa)',
-    webglRenderer: 'ANGLE (Mesa, AMD Radeon RX 580, OpenGL 4.5)',
-    maxTextureSize: 16384,
-  },
-  {
-    weight: 7,
+    weight: 12,
+    winVersion: 'Windows 10',
     platform: 'Win32',
     vendor: 'Google Inc.',
     screen: [1366, 768],
@@ -149,25 +147,90 @@ export const COHORT_PROFILES: readonly {
     webglVendor: 'Google Inc. (Intel)',
     webglRenderer: 'ANGLE (Intel, Intel(R) HD Graphics 4000 Direct3D11 vs_5_0 ps_5_0, D3D11)',
     maxTextureSize: 8192,
+    chPlatformVersion: '10.0.0',
   },
   {
-    weight: 6,
-    platform: 'MacIntel',
-    vendor: 'Apple Computer, Inc.',
-    screen: [1920, 1080],
-    colorDepth: 30,
+    weight: 10,
+    winVersion: 'Windows 11',
+    platform: 'Win32',
+    vendor: 'Google Inc.',
+    screen: [2560, 1440],
+    colorDepth: 24,
     devicePixelRatio: 1,
-    hardwareConcurrency: 6,
-    deviceMemory: 8,
-    webglVendor: 'Google Inc. (Apple)',
-    webglRenderer: 'ANGLE (Apple, ANGLE Metal Renderer: Apple M1 Pro, Unspecified Version)',
+    hardwareConcurrency: 12,
+    deviceMemory: 16,
+    webglVendor: 'Google Inc. (AMD)',
+    webglRenderer: 'ANGLE (AMD, AMD Radeon RX 6600 Direct3D11 vs_5_0 ps_5_0, D3D11)',
     maxTextureSize: 16384,
+    chPlatformVersion: '15.0.0',
+  },
+  {
+    weight: 9,
+    winVersion: 'Windows 10',
+    platform: 'Win32',
+    vendor: 'Google Inc.',
+    screen: [1600, 900],
+    colorDepth: 24,
+    devicePixelRatio: 1,
+    hardwareConcurrency: 4,
+    deviceMemory: 8,
+    webglVendor: 'Google Inc. (Intel)',
+    webglRenderer: 'ANGLE (Intel, Intel(R) HD Graphics 520 Direct3D11 vs_5_0 ps_5_0, D3D11)',
+    maxTextureSize: 16384,
+    chPlatformVersion: '10.0.0',
+  },
+  {
+    weight: 8,
+    winVersion: 'Windows 11',
+    platform: 'Win32',
+    vendor: 'Google Inc.',
+    screen: [1920, 1080],
+    colorDepth: 24,
+    devicePixelRatio: 1.25,
+    hardwareConcurrency: 16,
+    deviceMemory: 16,
+    webglVendor: 'Google Inc. (NVIDIA)',
+    webglRenderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)',
+    maxTextureSize: 16384,
+    chPlatformVersion: '15.0.0',
+  },
+  {
+    weight: 5,
+    winVersion: 'Windows 10',
+    platform: 'Win32',
+    vendor: 'Google Inc.',
+    screen: [1280, 720],
+    colorDepth: 24,
+    devicePixelRatio: 1,
+    hardwareConcurrency: 2,
+    deviceMemory: 4,
+    webglVendor: 'Google Inc. (Intel)',
+    webglRenderer: 'ANGLE (Intel, Intel(R) HD Graphics 3000 Direct3D11 vs_5_0 ps_5_0, D3D11)',
+    maxTextureSize: 8192,
+    chPlatformVersion: '10.0.0',
+  },
+  {
+    weight: 4,
+    winVersion: 'Windows 11',
+    platform: 'Win32',
+    vendor: 'Google Inc.',
+    screen: [3840, 2160],
+    colorDepth: 24,
+    devicePixelRatio: 1.5,
+    hardwareConcurrency: 16,
+    deviceMemory: 32,
+    webglVendor: 'Google Inc. (NVIDIA)',
+    webglRenderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Direct3D11 vs_5_0 ps_5_0, D3D11)',
+    maxTextureSize: 16384,
+    chPlatformVersion: '15.0.0',
   },
 ];
 
 /**
- * Region table: a national TLD or country signal, plus the timezone and locale a device
- * in that country would realistically report.
+ * Region table. United States only, on purpose - see the file header. A national TLD
+ * outside the US does not get a foreign timezone here, because a US-locked persona that
+ * suddenly claims Asia/Tokyo is the contradiction we are trying to remove. The table
+ * exists so alignToHost can recognise a US site and keep the persona coherent with it.
  */
 export const REGIONS: readonly {
   tlds: readonly string[];
@@ -176,20 +239,13 @@ export const REGIONS: readonly {
   language: string;
   languages: readonly string[];
 }[] = [
-  { tlds: ['.de', '.at', '.ch'], timezone: 'Europe/Berlin', timezoneOffset: -60, language: 'de-DE', languages: ['de-DE', 'de', 'en-US', 'en'] },
-  { tlds: ['.fr', '.be', '.lu'], timezone: 'Europe/Paris', timezoneOffset: -60, language: 'fr-FR', languages: ['fr-FR', 'fr', 'en-US', 'en'] },
-  { tlds: ['.co.uk', '.uk'], timezone: 'Europe/London', timezoneOffset: 0, language: 'en-GB', languages: ['en-GB', 'en'] },
-  { tlds: ['.jp'], timezone: 'Asia/Tokyo', timezoneOffset: -540, language: 'ja-JP', languages: ['ja-JP', 'ja', 'en-US', 'en'] },
-  { tlds: ['.in', '.co.in'], timezone: 'Asia/Kolkata', timezoneOffset: -330, language: 'en-IN', languages: ['en-IN', 'en', 'hi-IN'] },
-  { tlds: ['.pk', '.com.pk'], timezone: 'Asia/Karachi', timezoneOffset: -300, language: 'en-PK', languages: ['en-PK', 'en', 'ur-PK'] },
-  { tlds: ['.br', '.com.br'], timezone: 'America/Sao_Paulo', timezoneOffset: 180, language: 'pt-BR', languages: ['pt-BR', 'pt', 'en-US', 'en'] },
-  { tlds: ['.ca'], timezone: 'America/Toronto', timezoneOffset: 300, language: 'en-CA', languages: ['en-CA', 'en', 'fr-CA'] },
-  { tlds: ['.au', '.com.au'], timezone: 'Australia/Sydney', timezoneOffset: -660, language: 'en-AU', languages: ['en-AU', 'en'] },
-  { tlds: ['.nl'], timezone: 'Europe/Amsterdam', timezoneOffset: -60, language: 'nl-NL', languages: ['nl-NL', 'nl', 'en'] },
-  { tlds: ['.es'], timezone: 'Europe/Madrid', timezoneOffset: -60, language: 'es-ES', languages: ['es-ES', 'es', 'en'] },
-  { tlds: ['.it'], timezone: 'Europe/Rome', timezoneOffset: -60, language: 'it-IT', languages: ['it-IT', 'it', 'en'] },
-  { tlds: ['.se'], timezone: 'Europe/Stockholm', timezoneOffset: -60, language: 'sv-SE', languages: ['sv-SE', 'sv', 'en'] },
-  { tlds: ['.pl'], timezone: 'Europe/Warsaw', timezoneOffset: -60, language: 'pl-PL', languages: ['pl-PL', 'pl', 'en'] },
+  {
+    tlds: ['.us', '.gov', '.mil', '.edu', '.com', '.org', '.net', '.io', '.co'],
+    timezone: 'America/New_York',
+    timezoneOffset: 300,
+    language: 'en-US',
+    languages: ['en-US', 'en'],
+  },
 ];
 
 /** Weighted pick over the cohort table using a supplied uniform random source. */
@@ -205,9 +261,12 @@ function weightedCohort(r: () => number): (typeof COHORT_PROFILES)[number] {
 
 /**
  * Overlay a persona over a base fingerprint profile. `blend` snaps the hardware surfaces
- * to a real, populated cohort; `rotate` leaves the wider random draw in place. Either
- * way the identity surfaces (canvas/audio noise, fonts, voices) stay tied to the seed so
- * the session remains internally consistent.
+ * to a real, populated Windows cohort; `rotate` leaves the wider random draw in place.
+ * Either way the identity surfaces (canvas/audio noise, fonts, voices) stay tied to the
+ * seed so the session remains internally consistent.
+ *
+ * The Windows version is drawn from the cohort, so a refresh can land on Windows 10 or
+ * Windows 11 - a different machine each time, never a phone.
  */
 export function applyPersona(
   base: FingerprintProfile,
@@ -243,6 +302,10 @@ export function applyPersona(
     webglVendor: cohort.webglVendor,
     webglRenderer: cohort.webglRenderer,
     maxTextureSize: cohort.maxTextureSize,
+    // The UA-CH platform version must match the Windows release the cohort represents,
+    // or the client hints contradict the machine we are claiming to be.
+    chPlatform: 'Windows',
+    chPlatformVersion: cohort.chPlatformVersion,
     // A blended persona still gets its own noise, so canvas hashes differ between
     // sessions even though the declared hardware is common.
     canvasNoise: base.canvasNoise,
@@ -269,26 +332,27 @@ export function regionForHost(host: string): (typeof REGIONS)[number] | null {
 }
 
 /**
- * Make the persona geographically coherent with the site being visited. A site under
- * `.de` should not see a browser claiming Asia/Shanghai and en-US — that contradiction
- * is itself a fingerprint. Only the region surfaces change; hardware stays put.
+ * Keep the persona geographically coherent with the site being visited.
+ *
+ * Because the persona is US-locked, this never moves the timezone out of the United
+ * States. It only re-asserts the US locale for a recognised US host, so a site under
+ * .us or .gov sees a browser that agrees with it. The timezone itself is left to the
+ * seed, which is what makes it rotate on every refresh.
  */
 export function alignToHost(base: FingerprintProfile, host: string): FingerprintProfile {
   const region = regionForHost(host);
   if (!region) return base;
   return {
     ...base,
-    timezone: region.timezone,
-    timezoneOffset: region.timezoneOffset,
     language: region.language,
     languages: [...region.languages],
   };
 }
 
 /**
- * How large the crowd is for a given profile, as a rough share of the desktop web. Shown
- * in the shield panel so "blend" is not an abstract promise: a high number means you are
- * hiding among many, a low one means you stand out.
+ * How large the crowd is for a given profile, as a rough share of the Windows desktop
+ * web. Shown in the shield panel so "blend" is not an abstract promise: a high number
+ * means you are hiding among many, a low one means you stand out.
  */
 export function cohortShare(profile: FingerprintProfile): number {
   let matched = 0;
