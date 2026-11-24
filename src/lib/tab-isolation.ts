@@ -14,6 +14,7 @@
  */
 
 import type { ProbeResult } from './fingerprint-probe';
+import type { LoadFailure } from './error-page';
 
 export type Tab = {
   id: string;
@@ -61,6 +62,10 @@ export type Tab = {
   probe: ProbeResult | null;
   /** True while a probe is in flight. */
   probing: boolean;
+  /** The last load failure, or null when the page loaded. */
+  error: LoadFailure | null;
+  /** The rendered error document, as a data: URL the WebView can show. */
+  errorPage: string | null;
 };
 
 let counter = 0;
@@ -88,6 +93,8 @@ export function createTab(url = ''): Tab {
     cloaked: 0,
     probe: null,
     probing: false,
+    error: null,
+    errorPage: null,
   };
 }
 
