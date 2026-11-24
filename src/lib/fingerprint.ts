@@ -36,6 +36,8 @@
  * server-side behaviour are outside what any in-page script can change.
  */
 
+import { HARDENING_SCRIPT } from './fingerprint-hardening';
+
 export type FingerprintProfile = {
   seed: string;
   userAgent: string;
@@ -67,6 +69,18 @@ export type FingerprintProfile = {
   connectionRtt: number;
   voices: string[];
   mediaDevices: { kind: string; label: string }[];
+  // ---- Client Hints (UA-CH) ----
+  // These must be derived from the SAME user agent string, never chosen separately.
+  // Chrome 131 ships UA-CH; a browser claiming Chrome 131 without it is a flagged
+  // WebView. Deriving them here makes the two surfaces unable to disagree.
+  chMajor: string;
+  chPlatform: string;
+  chPlatformVersion: string;
+  chArch: string;
+  chBits: string;
+  chBrands: [string, string][];
+  /** Reported prefers-color-scheme. Must match the app's actual theme. */
+  dark: boolean;
 };
 
 /** Small deterministic PRNG (mulberry32) so one seed yields one coherent profile. */
@@ -172,23 +186,56 @@ const FONT_POOL: readonly string[] = [
   'Verdana',
 ];
 
-const UA_POOL: readonly { ua: string; platform: string; vendor: string }[] = [
+const UA_POOL: readonly {
+  ua: string;
+  platform: string;
+  vendor: string;
+  /** UA-CH platform token, and the OS version Chrome would report alongside it. */
+  chPlatform: string;
+  chPlatformVersion: string;
+  chArch: string;
+  chBits: string;
+}[] = [
   {
     ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     platform: 'Win32',
     vendor: 'Google Inc.',
+    chPlatform: 'Windows',
+    chPlatformVersion: '15.0.0',
+    chArch: 'x86',
+    chBits: '64',
   },
   {
     ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     platform: 'MacIntel',
     vendor: 'Google Inc.',
+    chPlatform: 'macOS',
+    chPlatformVersion: '14.6.1',
+    chArch: 'arm',
+    chBits: '64',
   },
   {
     ua: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     platform: 'Linux x86_64',
     vendor: 'Google Inc.',
+    chPlatform: 'Linux',
+    chPlatformVersion: '6.1.0',
+    chArch: 'x86',
+    chBits: '64',
   },
 ];
+
+/**
+ * The brand list Chrome 131 sends. The version follows the real major version, so a UA
+ * claiming 131 never sends a 130 brand list.
+ */
+function chBrandsFor(major: string): [string, string][] {
+  return [
+    ['Not_A Brand', '24'],
+    ['Chromium', major],
+    ['Google Chrome', major],
+  ];
+}
 
 const VOICE_POOL: readonly string[] = [
   'Google UK English Female',
@@ -220,8 +267,19 @@ export function buildProfile(seed: string): FingerprintProfile {
   );
   const voiceCount = 2 + Math.floor(r() * 3);
   const voices = VOICE_POOL.slice(0, voiceCount);
+  // The major version is read out of the UA string rather than passed in, so the two
+  // can never drift apart.
+  const majorMatch = ua.ua.match(/Chrome\/(\d+)/);
+  const chMajor = majorMatch ? majorMatch[1] : '131';
   return {
     seed,
+    chMajor,
+    chPlatform: ua.chPlatform,
+    chPlatformVersion: ua.chPlatformVersion,
+    chArch: ua.chArch,
+    chBits: ua.chBits,
+    chBrands: chBrandsFor(chMajor),
+    dark: r() > 0.35,
     userAgent: ua.ua,
     platform: ua.platform,
     vendor: ua.vendor,
@@ -299,6 +357,13 @@ export function buildInjectionScript(
     connRtt: profile.connectionRtt,
     voices: profile.voices,
     media: profile.mediaDevices,
+    dark: profile.dark,
+    chMajor: profile.chMajor,
+    chPlatform: profile.chPlatform,
+    chPlatformVersion: profile.chPlatformVersion,
+    chArch: profile.chArch,
+    chBits: profile.chBits,
+    chBrands: profile.chBrands,
     tab: tabId,
     webrtc: opts.blockWebRtc !== false,
     timers: opts.coarsenTimers !== false,
@@ -383,15 +448,26 @@ export function buildInjectionScript(
     var toDataURL = HTMLCanvasElement.prototype.toDataURL;
     var toBlob = HTMLCanvasElement.prototype.toBlob;
     var getImageData = CanvasRenderingContext2D.prototype.getImageData;
+    // C.noise is in [0,1), so Math.floor(C.noise * 7) is 0 for ~86% of seeds and 0 for
+    // every small one — which meant the canvas fingerprint came out identical to a
+    // stock browser most of the time. Derive the perturbation from the seed and make it
+    // a guaranteed +/-1 on a sparse set of pixels instead.
+    var q = Math.floor(C.noise * 100000) || 1;
+    var step = (q % 2 === 0) ? 1 : -1;
+    var stride = 17 + (q % 13);
     var nudge = function(canvas){
       try {
         var ctx = canvas.getContext('2d');
         if (!ctx || !canvas.width || !canvas.height) return;
         var w = Math.min(canvas.width, 64), h = Math.min(canvas.height, 64);
+        if (!w || !h) return;
         var d = getImageData.call(ctx, 0, 0, w, h);
-        for (var i = 0; i < d.data.length; i += 4) {
-          d.data[i] = (d.data[i] + Math.floor(C.noise * 7)) % 256;
-          d.data[i + 1] = (d.data[i + 1] + Math.floor(C.noise * 3)) % 256;
+        var px = d.data.length >> 2;
+        if (!px) return;
+        for (var k = 0; k < px; k += stride) {
+          var i = k << 2;
+          d.data[i]     = (d.data[i] + step + 256) & 255;
+          d.data[i + 2] = (d.data[i + 2] - step + 256) & 255;
         }
         ctx.putImageData(d, 0, 0);
       } catch(e){}
@@ -407,8 +483,10 @@ export function buildInjectionScript(
     CanvasRenderingContext2D.prototype.getImageData = function(){
       var d = getImageData.apply(this, arguments);
       try {
-        for (var i = 0; i < d.data.length; i += 4) {
-          d.data[i] = (d.data[i] + Math.floor(C.noise * 5)) % 256;
+        var px = d.data.length >> 2;
+        for (var k = 0; k < px; k += stride) {
+          var i = k << 2;
+          d.data[i] = (d.data[i] + step + 256) & 255;
         }
       } catch(e){}
       return d;
@@ -763,5 +841,11 @@ export function buildInjectionScript(
     d.content = 'no-referrer';
     (document.head || document.documentElement).appendChild(d);
   });
+
+  // ===================================================================================
+  // Deeper surfaces. Kept in its own module because each block below closes a
+  // contradiction that would otherwise make the declared identity provably false.
+  // ===================================================================================
+  ${HARDENING_SCRIPT}
 })();`;
 }
