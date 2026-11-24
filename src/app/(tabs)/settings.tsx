@@ -10,8 +10,19 @@ import { DOH_ENDPOINT, usePrivacySettings, type PrivacySettings } from '@/lib/pr
 import { BURN_OPTIONS, type BurnInterval } from '@/lib/session-burn';
 import { SEARCH_ENGINES, type SearchEngine } from '@/lib/url';
 
+/**
+ * The settings that are genuinely on/off, derived from PrivacySettings rather than
+ * listed by hand. A hand-written Omit list silently rots: `autoRefresh` and `exit` are
+ * pickers, not switches, and when they were added the Omit was not updated, so a Switch
+ * was handed a RefreshInterval / ExitKind and the build failed type-check. Deriving the
+ * keys from the value type means a new picker can never be wired to a Switch again.
+ */
+type BooleanSettingKey = {
+  [K in keyof PrivacySettings]: PrivacySettings[K] extends boolean ? K : never;
+}[keyof PrivacySettings];
+
 type ToggleKey = {
-  key: keyof Omit<PrivacySettings, 'searchEngine' | 'burnInterval' | 'personaMode'>;
+  key: BooleanSettingKey;
   title: string;
   detail: string;
   icon:
