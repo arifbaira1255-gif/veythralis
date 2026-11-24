@@ -1,11 +1,12 @@
-/**
- * Zuno app icon generator.
- *
- * Draws the mark deterministically so the icon uses exactly the brand colours and stays
- * crisp at every size. A geometric shield with a hexagonal aperture at its centre — the
- * "closed eye" idea: protection, not surveillance. No text, no letters.
- */
+"""
+Zuno app icon generator.
+
+Draws the mark deterministically so the icon uses exactly the brand colours and stays
+crisp at every size. A geometric shield with a hexagonal aperture at its centre — the
+"closed eye" idea: protection, not surveillance. No text, no letters.
+"""
 import math
+import os
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
@@ -155,6 +156,7 @@ def build():
 
 
 def main():
+    os.makedirs("assets/images", exist_ok=True)
     canvas = build().resize((OUT, OUT), Image.LANCZOS)
     canvas.save("assets/images/icon.png", optimize=True)
     print("wrote assets/images/icon.png", canvas.size)
