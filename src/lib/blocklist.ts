@@ -1,13 +1,18 @@
 /**
- * Veythralis tracker blocklist.
+ * Zuno tracker blocklist.
  *
- * Design decision, stated plainly: this list blocks *tracking* endpoints — analytics,
- * telemetry, session replay, cross-site pixels and retargeting beacons — and it
- * deliberately does NOT block ad *delivery* domains. Ads therefore still render; what
- * stops is the measurement and profiling around them.
+ * Design decision, stated plainly: this list blocks *measurement*, not *advertising*.
+ * A request is blocked when its purpose is to observe you — analytics, session replay,
+ * cross-site pixels, retargeting beacons, telemetry. A request is allowed when its
+ * purpose is to render an ad you can see, even when the same company runs both.
  *
- * Matching is by hostname suffix, so `www.google-analytics.com` matches
- * `google-analytics.com`.
+ * That distinction is why `AD_DELIVERY_HOSTS` is checked *first* and always wins. If a
+ * host appears in both lists, the ad renders and only its measurement paths are cut.
+ * Blocking the creative would be ad blocking, which this browser deliberately does not
+ * do.
+ *
+ * Matching is by registrable domain suffix, so `stats.g.doubleclick.net` is covered by
+ * `doubleclick.net` without listing every subdomain.
  */
 
 /** Analytics, telemetry, session replay, cross-site pixels, retargeting beacons. */
@@ -19,142 +24,186 @@ export const TRACKER_HOSTS: readonly string[] = [
   'googletagservices.com',
   'ssl.google-analytics.com',
   'stats.g.doubleclick.net',
-  'googleadservices.com',
-  'google-analytics.l.google.com',
-  // Meta pixel + conversions
+  'region1.google-analytics.com',
+  'region1.analytics.google.com',
+  // Meta
   'connect.facebook.net',
-  'pixel.facebook.com',
-  'analytics.facebook.com',
   'graph.facebook.com',
-  // Product analytics
-  'segment.io',
-  'segment.com',
-  'api.segment.io',
-  'mixpanel.com',
-  'api.mixpanel.com',
-  'amplitude.com',
-  'api.amplitude.com',
-  'heap.io',
-  'heapanalytics.com',
-  'posthog.com',
-  'app.posthog.com',
-  'plausible.io',
-  'umami.is',
-  'matomo.cloud',
-  'statcounter.com',
-  'quantserve.com',
-  'quantcount.com',
-  'scorecardresearch.com',
-  'chartbeat.com',
-  'chartbeat.net',
-  'parsely.com',
-  'newrelic.com',
-  'nr-data.net',
-  'bugsnag.com',
-  'sentry.io',
-  'datadoghq-browser-agent.com',
-  'logrocket.com',
-  'logrocket.io',
-  'lr-ingest.io',
-  'smartlook.com',
-  'fullstory.com',
-  'fs.fullstory.com',
-  'inspectlet.com',
-  'mouseflow.com',
-  'crazyegg.com',
+  'pixel.facebook.com',
+  'an.facebook.com',
+  'business.facebook.com',
+  // Microsoft
   'clarity.ms',
-  'hotjar.com',
-  'hotjar.io',
+  'bat.bing.com',
+  'c.bing.com',
+  // Twitter / X
+  'static.ads-twitter.com',
+  'analytics.twitter.com',
+  't.co',
+  // LinkedIn
+  'snap.licdn.com',
+  'px.ads.linkedin.com',
+  // TikTok
+  'analytics.tiktok.com',
+  'business-api.tiktok.com',
+  // Pinterest / Snap
+  'ct.pinterest.com',
+  'sc-static.net',
+  'tr.snapchat.com',
+  // Hotjar / FullStory / Heap / Mixpanel / Amplitude / Segment
   'static.hotjar.com',
-  'vwo.com',
-  'visualwebsiteoptimizer.com',
-  'optimizely.com',
-  'cdn.optimizely.com',
-  'abtasty.com',
-  'kissmetrics.com',
-  'hubspot.com',
-  'hs-analytics.net',
-  'hs-scripts.com',
-  'hsforms.net',
-  'hsleadflows.net',
-  'marketo.net',
-  'mktoresp.com',
-  'pardot.com',
-  'eloqua.com',
-  'demdex.net',
+  'script.hotjar.com',
+  'vars.hotjar.com',
+  'in.hotjar.com',
+  'fullstory.com',
+  'rs.fullstory.com',
+  'edge.fullstory.com',
+  'heapanalytics.com',
+  'cdn.heapanalytics.com',
+  'api.mixpanel.com',
+  'cdn.mxpnl.com',
+  'api-js.mixpanel.com',
+  'api.amplitude.com',
+  'cdn.amplitude.com',
+  'api.segment.io',
+  'cdn.segment.com',
+  'api.segment.com',
+  // Session replay / UX
+  'smartlook.com',
+  'logrocket.com',
+  'r.lr-ingest.io',
+  'mouseflow.com',
+  'cdn.mouseflow.com',
+  'luckyorange.com',
+  'cdn.luckyorange.com',
+  'inspectlet.com',
+  'cdn.inspectlet.com',
+  'quantummetric.com',
+  'cdn.quantummetric.com',
+  'decibelinsight.net',
+  'cdn.decibelinsight.net',
+  'contentsquare.net',
+  't.contentsquare.net',
+  // Adobe
   'omtrdc.net',
-  'everesttech.net',
   '2o7.net',
+  'demdex.net',
+  'everesttech.net',
   'adobedtm.com',
-  'tealiumiq.com',
+  'assets.adobedtm.com',
+  // New Relic / Datadog / Sentry (RUM beacons)
+  'bam.nr-data.net',
+  'js-agent.newrelic.com',
+  'browser-intake-datadoghq.com',
+  'rum.browser-intake-datadoghq.com',
+  'browser.sentry-cdn.com',
+  // Data brokers / DMPs / identity graphs
   'krxd.net',
-  'bluekai.com',
-  'exelator.com',
   'agkn.com',
   'rlcdn.com',
-  'tapad.com',
   'crwdcntrl.net',
+  'bluekai.com',
+  'exelator.com',
+  'tapad.com',
+  'adsrvr.org',
   'mathtag.com',
   'turn.com',
-  'adsrvr.org',
-  'casalemedia.com',
-  'bidswitch.net',
-  'liadm.com',
-  'pippio.com',
+  'simpli.fi',
   'zeotap.com',
   'id5-sync.com',
+  'liadm.com',
+  'pippio.com',
   'liveramp.com',
-  'narrative.io',
-  'sharethis.com',
-  'addthis.com',
-  'disqus.com',
-  'onesignal.com',
-  'pushwoosh.com',
-  'airship.com',
-  'braze.com',
-  'appboy.com',
-  'iterable.com',
-  'klaviyo.com',
-  'mailchimp.com',
-  'list-manage.com',
-  'sendgrid.net',
-  'customer.io',
-  'moengage.com',
-  'clevertap.com',
-  'appsflyer.com',
-  'adjust.com',
-  'branch.io',
-  'kochava.com',
-  'singular.net',
-  'tenjin.io',
-  'yandex.ru/metrika',
-  'mc.yandex.ru',
-  'top-fwz1.mail.ru',
-  'vk.com/rtrg',
+  'neustar.biz',
+  // Retargeting / affiliate measurement
   'criteo.com',
   'criteo.net',
   'taboola.com',
   'outbrain.com',
-  'zemanta.com',
-  'mgid.com',
-  'revcontent.com',
-  'adroll.com',
-  'quora.com/qevent',
-  'bat.bing.com',
-  'clarity.microsoft.com',
-  'snap.licdn.com',
-  'px.ads.linkedin.com',
-  'ads.linkedin.com',
-  'analytics.tiktok.com',
-  'business-api.tiktok.com',
-  'analytics.twitter.com',
-  'static.ads-twitter.com',
-  't.co/i/adsct',
-  'sc-static.net',
-  'tr.snapchat.com',
-  'analytics.pinterest.com',
-  'ct.pinterest.com',
-  's.pinimg.com/ct',
+  'casalemedia.com',
+  'moatads.com',
+  'doubleverify.com',
+  'adsafeprotected.com',
+  'iasds01.com',
+  'serving-sys.com',
+  // Marketing automation / email
+  'mktoresp.com',
+  'mktomail.com',
+  'hs-analytics.net',
+  'hsforms.net',
+  'hs-scripts.com',
+  'hubspot.com',
+  'track.hubspot.com',
+  'pardot.com',
+  'pi.pardot.com',
+  'marketo.net',
+  'munchkin.marketo.net',
+  'eloqua.com',
+  'en25.com',
+  'klaviyo.com',
+  'static.klaviyo.com',
+  'a.klaviyo.com',
+  'mailchimp.com',
+  'chimpstatic.com',
+  'list-manage.com',
+  'sendgrid.net',
+  'braze.com',
+  'appboy.com',
+  'iterable.com',
+  'customer.io',
+  'track.customer.io',
+  // A/B testing (leaks behaviour, not just page views)
+  'optimizely.com',
+  'cdn.optimizely.com',
+  'vwo.com',
+  'dev.visualwebsiteoptimizer.com',
+  'abtasty.com',
+  'try.abtasty.com',
+  'convert.com',
+  'cdn-3.convertexperiments.com',
+  // Push / in-app messaging
+  'onesignal.com',
+  'cdn.onesignal.com',
+  'pushengage.com',
+  'izooto.com',
+  'cleverpush.com',
+  // Misc telemetry
+  'scorecardresearch.com',
+  'sb.scorecardresearch.com',
+  'quantserve.com',
+  'quantcount.com',
+  'chartbeat.com',
+  'static.chartbeat.com',
+  'parsely.com',
+  'pixel.parsely.com',
+  'newrelic.com',
+  'nr-data.net',
+  'statcounter.com',
+  'histats.com',
+  'yandex.ru/metrika',
+  'mc.yandex.ru',
+  'top-fwz1.mail.ru',
+  'vk.com/rtrg',
+  'criteo-sync.teads.tv',
+  'analytics.yahoo.com',
+  'geo.yahoo.com',
+  'udc.yahoo.com',
+  'narrative.io',
+  'sitescout.com',
+  'adform.net',
+  'track.adform.net',
+  'smartadserver.com',
+  'gemius.pl',
+  'hit.gemius.pl',
+  'imedia.cz',
+  'seznam.cz/impression',
+  'wt-eu02.net',
+  'webtrekk.net',
+  'etracker.com',
+  'cdn.etracker.com',
+  'piwik.pro',
+  'matomo.cloud',
+  'cdn.matomo.cloud',
 ];
 
 /**
@@ -201,6 +250,17 @@ export const AD_DELIVERY_HOSTS: readonly string[] = [
   'inmobi.com',
   'startappservice.com',
   'adcolony.com',
+  // Ad networks that also appear in the tracker list. Their *creative* delivery must
+  // keep working or the ad slot renders empty — which is ad blocking, not tracking
+  // blocking. The measurement endpoints on these networks are caught by path rules
+  // instead, so the ad still shows while its telemetry does not.
+  'criteo.net',
+  'criteo.com',
+  'taboola.com',
+  'outbrain.com',
+  'casalemedia.com',
+  'everesttech.net',
+  'adsrvr.org',
 ];
 
 /** Path fragments that mark a request as measurement rather than content. */
@@ -208,78 +268,72 @@ export const TRACKER_PATHS: readonly string[] = [
   '/collect',
   '/g/collect',
   '/j/collect',
+  '/r/collect',
+  '/batch',
   '/beacon',
-  '/beacons',
   '/pixel',
-  '/pixels',
+  '/p.gif',
   '/track',
   '/tracking',
   '/telemetry',
   '/analytics',
-  '/gtag/js',
-  '/gtm.js',
-  '/gtag/destination',
-  '/tr?',
-  '/i/adsct',
-  '/rtrg',
-  '/metrika',
-  '/qevent',
-  '/pageview',
-  '/impression',
-  '/event?',
-  '/events?',
-  '/log?',
-  '/log/',
   '/metrics',
+  '/impression',
+  '/impressions',
+  '/pageview',
+  '/pageviews',
+  '/event',
+  '/events',
+  '/log',
+  '/logs',
   '/rum',
-  '/sentry',
-  '/ingest',
-  '/batch/',
   '/v1/track',
   '/v2/track',
+  '/api/track',
+  '/api/event',
+  '/api/events',
+  '/api/collect',
+  '/api/beacon',
+  '/gtag/js',
+  '/gtm.js',
+  '/analytics.js',
+  '/ga.js',
 ];
 
-function hostMatches(host: string, entry: string): boolean {
-  // Entries may carry a path (e.g. "yandex.ru/metrika"); compare the host part only.
-  const bare = entry.split('/')[0];
-  return host === bare || host.endsWith(`.${bare}`);
-}
-
+/** True when the host is an ad-delivery endpoint that must keep working. */
 export function isAdDelivery(host: string): boolean {
-  return AD_DELIVERY_HOSTS.some((entry) => hostMatches(host, entry));
+  const h = host.toLowerCase();
+  return AD_DELIVERY_HOSTS.some((d) => h === d || h.endsWith(`.${d}`));
 }
 
+/** True when the host is a known tracker. */
 export function isTrackerHost(host: string): boolean {
-  if (!host) return false;
-  if (isAdDelivery(host)) return false;
-  return TRACKER_HOSTS.some((entry) => hostMatches(host, entry));
+  const h = host.toLowerCase();
+  return TRACKER_HOSTS.some((d) => h === d || h.endsWith(`.${d}`));
 }
 
+/** True when the path looks like a measurement endpoint. */
 export function isTrackerPath(path: string): boolean {
   const p = path.toLowerCase();
-  return TRACKER_PATHS.some((frag) => p.includes(frag));
+  return TRACKER_PATHS.some((t) => p.includes(t));
 }
 
 /**
- * Decide whether a request should be blocked. Ad delivery always wins, so a creative
- * from an ad network is never blocked even when its path looks like measurement.
+ * The single decision point. Ad delivery is checked first and always wins, so a host
+ * that appears in both lists still renders its ad — only its measurement paths are cut.
  */
 export function shouldBlock(url: string): boolean {
-  let host = '';
-  let path = '';
+  let parsed: URL;
   try {
-    const u = new URL(url);
-    host = u.hostname.toLowerCase();
-    path = u.pathname + u.search;
+    parsed = new URL(url);
   } catch {
     return false;
   }
-  if (!host) return false;
+  const host = parsed.hostname.toLowerCase();
   if (isAdDelivery(host)) return false;
   if (isTrackerHost(host)) return true;
-  // A generic path rule only applies to third-party-looking hosts, never to the page's
-  // own origin, so a site's own /analytics page still loads.
-  return isTrackerPath(path) && /(^|\.)(analytics|track|tracker|telemetry|metrics|beacon|pixel|stats|collect)/.test(host);
+  return isTrackerPath(parsed.pathname);
 }
 
+/** How many tracker domains the browser knows about, for the About screen. */
 export const TRACKER_COUNT = TRACKER_HOSTS.length;
