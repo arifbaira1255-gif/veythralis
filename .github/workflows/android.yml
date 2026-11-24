@@ -72,6 +72,13 @@ jobs:
           npx --yes playwright@1.55.0 install --with-deps chromium || true
           node scripts/verify-privacy.mjs
 
+      # The navigation harness exists because the browser was once unusable: a per-tab
+      # cookie prefix broke every server-side session, a recursive localStorage getter
+      # threw on every site, and a cancelled navigation never re-issued the rewritten
+      # URL. Each of those is a check here, so none of them can come back silently.
+      - name: Verify navigation and page integrity
+        run: node scripts/verify-navigation.mjs
+
       - name: Verify JS bundle compiles
         run: npx expo export --platform android --output-dir .expo-export-check
 
