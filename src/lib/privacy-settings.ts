@@ -1,6 +1,8 @@
 import { usePersistentState } from '@/hooks/use-persistent-state';
 
+import { REFRESH_OFF, type RefreshInterval } from './auto-refresh';
 import { DEFAULT_HEADER_SETTINGS, type HeaderSettings } from './header-rules';
+import type { ExitKind } from './proxy';
 import type { PersonaMode } from './persona';
 import type { BurnInterval } from './session-burn';
 import type { SearchEngine } from './url';
@@ -40,6 +42,16 @@ export type PrivacySettings = {
   liveProbe: boolean;
   /** Block CNAME-cloaked analytics endpoints that look like first-party subdomains. */
   blockCnameCloaking: boolean;
+  /**
+   * Reload the active tab on a timer, minting a brand-new identity each time (new seed,
+   * fresh user agent, wiped cookies and storage). Off by default: a page that reloads
+   * itself without being asked is a surprise, not a feature.
+   */
+  autoRefresh: RefreshInterval;
+  /** Rotate the identity on every reload, not just on the auto-refresh timer. */
+  rotateOnReload: boolean;
+  /** Which network exit to use. */
+  exit: ExitKind;
 };
 
 export const DEFAULT_SETTINGS: PrivacySettings = {
@@ -60,6 +72,9 @@ export const DEFAULT_SETTINGS: PrivacySettings = {
   geoCoherentPersona: true,
   liveProbe: true,
   blockCnameCloaking: true,
+  autoRefresh: REFRESH_OFF,
+  rotateOnReload: false,
+  exit: 'direct',
 };
 
 /** The DoH resolver used when DNS-over-HTTPS is on. */
