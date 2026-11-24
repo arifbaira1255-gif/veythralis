@@ -1,12 +1,20 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useState } from 'react';
-import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 
 import { Screen } from '@/components/screen';
 import { ConfirmDialog } from '@/components/ui';
 import { BRAND, radius, spacing, useColors } from '@/constants/theme';
 import { TRACKER_COUNT } from '@/lib/blocklist';
+import { formatRefresh, parseRefreshInput, REFRESH_OFF } from '@/lib/auto-refresh';
 import { DOH_ENDPOINT, usePrivacySettings, type PrivacySettings } from '@/lib/privacy-settings';
+import {
+  describeEndpoint,
+  EXIT_OPTIONS,
+  validateEndpoint,
+  type ExitKind,
+  type ResidentialEndpoint,
+} from '@/lib/proxy';
 import { BURN_OPTIONS, type BurnInterval } from '@/lib/session-burn';
 import { SEARCH_ENGINES, type SearchEngine } from '@/lib/url';
 
@@ -138,9 +146,40 @@ export default function SettingsScreen() {
   const colors = useColors();
   const [settings, setSettings, status] = usePrivacySettings();
   const [confirmClear, setConfirmClear] = useState(false);
+  const [refreshDraft, setRefreshDraft] = useState('');
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [epDraft, setEpDraft] = useState<ResidentialEndpoint>(settings.residentialEndpoint);
+  const [epError, setEpError] = useState<string | null>(null);
 
   const set = <K extends keyof PrivacySettings>(key: K, value: PrivacySettings[K]) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const applyRefresh = () => {
+    const text = refreshDraft.trim();
+    if (!text) {
+      set('autoRefresh', REFRESH_OFF);
+      setRefreshError(null);
+      return;
+    }
+    const parsed = parseRefreshInput(text);
+    if (!parsed) {
+      setRefreshError('Not a duration. Try 30s, 5m, 2h or 1h30m.');
+      return;
+    }
+    setRefreshError(null);
+    set('autoRefresh', parsed);
+    setRefreshDraft('');
+  };
+
+  const saveEndpoint = () => {
+    const err = validateEndpoint(epDraft);
+    if (err) {
+      setEpError(err);
+      return;
+    }
+    setEpError(null);
+    set('residentialEndpoint', epDraft);
   };
 
   return (
@@ -213,6 +252,183 @@ export default function SettingsScreen() {
           );
         })}
       </View>
+
+      <Text style={[styles.section, { color: colors.muted }]}>AUTO-REFRESH &amp; IDENTITY ROTATION</Text>
+      <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <Text style={[styles.rowDetail, { color: colors.muted, padding: spacing.md }]}>
+          Reload the page on a timer and mint a brand-new identity each time: new cookies,
+          new user agent, new Windows machine, new US timezone. A returning visit is a
+          different person, not the same one reloading.
+        </Text>
+        <View style={[styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}>
+          <View style={styles.rowText}>
+            <Text style={[styles.rowTitle, { color: colors.text }]}>
+              Current: {formatRefresh(settings.autoRefresh)}
+            </Text>
+            <Text style={[styles.rowDetail, { color: colors.muted }]}>
+              Type 30s, 5m, 2h or 1h30m. Leave empty to turn it off.
+            </Text>
+          </View>
+        </View>
+        <View style={[styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}>
+          <TextInput
+            value={refreshDraft}
+            onChangeText={(t) => {
+              setRefreshDraft(t);
+              setRefreshError(null);
+            }}
+            onSubmitEditing={applyRefresh}
+            placeholder="e.g. 5m"
+            placeholderTextColor={colors.muted}
+            autoCapitalize="none"
+            autoCorrect={false}
+            accessibilityLabel="Auto-refresh interval"
+            style={[styles.input, { color: colors.text, borderColor: colors.border }]}
+          />
+          <Pressable
+            onPress={applyRefresh}
+            accessibilityRole="button"
+            style={[styles.applyBtn, { backgroundColor: colors.primary }]}>
+            <Text style={[styles.applyText, { color: colors.onPrimary }]}>Set</Text>
+          </Pressable>
+        </View>
+        {refreshError ? (
+          <Text style={[styles.error, { color: colors.danger }]}>{refreshError}</Text>
+        ) : null}
+        <View style={[styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}>
+          <View style={styles.rowText}>
+            <Text style={[styles.rowTitle, { color: colors.text }]}>Rotate on every reload</Text>
+            <Text style={[styles.rowDetail, { color: colors.muted }]}>
+              A manual reload also becomes a new identity, not just the timer.
+            </Text>
+          </View>
+          <Switch
+            value={settings.rotateOnReload}
+            onValueChange={(v) => set('rotateOnReload', v)}
+            disabled={status === 'loading'}
+            trackColor={{ true: colors.primary, false: colors.border }}
+            thumbColor={colors.card}
+          />
+        </View>
+      </View>
+
+      <Text style={[styles.section, { color: colors.muted }]}>NETWORK EXIT</Text>
+      <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        {EXIT_OPTIONS.map((opt, i) => {
+          const selected = settings.exit === opt.kind;
+          return (
+            <Pressable
+              key={opt.kind}
+              onPress={() => set('exit', opt.kind as ExitKind)}
+              accessibilityRole="radio"
+              accessibilityState={{ selected }}
+              style={[
+                styles.row,
+                i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+              ]}>
+              <View style={styles.rowText}>
+                <Text style={[styles.rowTitle, { color: colors.text }]}>{opt.title}</Text>
+                <Text style={[styles.rowDetail, { color: colors.muted }]}>{opt.detail}</Text>
+                <Text style={[styles.caveat, { color: colors.warn }]}>{opt.caveat}</Text>
+              </View>
+              <Ionicons
+                name={selected ? 'radio-button-on' : 'radio-button-off'}
+                size={20}
+                color={selected ? colors.primary : colors.muted}
+              />
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {settings.exit === 'residential' ? (
+        <>
+          <Text style={[styles.section, { color: colors.muted }]}>RESIDENTIAL ENDPOINT</Text>
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.rowDetail, { color: colors.muted, padding: spacing.md }]}>
+              Enter the endpoint your provider gave you. Zuno ships no endpoint of its own:
+              there is no permanently free residential proxy, and a free public proxy list
+              is a list of machines that read your traffic.
+            </Text>
+            <View style={[styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}>
+              <TextInput
+                value={epDraft.host}
+                onChangeText={(t) => setEpDraft((p) => ({ ...p, host: t }))}
+                placeholder="gate.example.com"
+                placeholderTextColor={colors.muted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                accessibilityLabel="Proxy host"
+                style={[styles.input, { color: colors.text, borderColor: colors.border }]}
+              />
+            </View>
+            <View style={[styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}>
+              <TextInput
+                value={epDraft.port ? String(epDraft.port) : ''}
+                onChangeText={(t) => setEpDraft((p) => ({ ...p, port: parseInt(t.replace(/\D/g, ''), 10) || 0 }))}
+                placeholder="8080"
+                placeholderTextColor={colors.muted}
+                keyboardType="number-pad"
+                accessibilityLabel="Proxy port"
+                style={[styles.input, { color: colors.text, borderColor: colors.border }]}
+              />
+            </View>
+            <View style={[styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}>
+              {(['http', 'socks5'] as const).map((s) => (
+                <Pressable
+                  key={s}
+                  onPress={() => setEpDraft((p) => ({ ...p, scheme: s }))}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: epDraft.scheme === s }}
+                  style={[styles.schemeChip, { borderColor: epDraft.scheme === s ? colors.primary : colors.border }]}>
+                  <Text style={[styles.schemeText, { color: epDraft.scheme === s ? colors.primary : colors.muted }]}>
+                    {s.toUpperCase()}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={[styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}>
+              <TextInput
+                value={epDraft.username || ''}
+                onChangeText={(t) => setEpDraft((p) => ({ ...p, username: t }))}
+                placeholder="username (optional)"
+                placeholderTextColor={colors.muted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                accessibilityLabel="Proxy username"
+                style={[styles.input, { color: colors.text, borderColor: colors.border }]}
+              />
+            </View>
+            <View style={[styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}>
+              <TextInput
+                value={epDraft.password || ''}
+                onChangeText={(t) => setEpDraft((p) => ({ ...p, password: t }))}
+                placeholder="password (optional)"
+                placeholderTextColor={colors.muted}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                accessibilityLabel="Proxy password"
+                style={[styles.input, { color: colors.text, borderColor: colors.border }]}
+              />
+            </View>
+            <View style={[styles.row, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}>
+              <View style={styles.rowText}>
+                <Text style={[styles.rowDetail, { color: colors.muted }]}>
+                  Saved: {describeEndpoint(settings.residentialEndpoint)}
+                </Text>
+              </View>
+              <Pressable
+                onPress={saveEndpoint}
+                accessibilityRole="button"
+                style={[styles.applyBtn, { backgroundColor: colors.primary }]}>
+                <Text style={[styles.applyText, { color: colors.onPrimary }]}>Save</Text>
+              </Pressable>
+            </View>
+            {epError ? <Text style={[styles.error, { color: colors.danger }]}>{epError}</Text> : null}
+          </View>
+        </>
+      ) : null}
 
       <Text style={[styles.section, { color: colors.muted }]}>SEARCH ENGINE</Text>
       <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -295,4 +511,30 @@ const styles = StyleSheet.create({
   rowTitle: { fontSize: 15, fontWeight: '600' },
   rowDetail: { fontSize: 12, lineHeight: 17 },
   about: { fontSize: 13, lineHeight: 19, padding: spacing.md },
+  input: {
+    flex: 1,
+    fontSize: 15,
+    minHeight: 44,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+  },
+  applyBtn: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    minHeight: 40,
+    justifyContent: 'center',
+  },
+  applyText: { fontSize: 14, fontWeight: '700' },
+  error: { fontSize: 12, paddingHorizontal: spacing.md, paddingBottom: spacing.sm },
+  caveat: { fontSize: 11, lineHeight: 16, marginTop: 4 },
+  schemeChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginRight: spacing.sm,
+  },
+  schemeText: { fontSize: 13, fontWeight: '700' },
 });
